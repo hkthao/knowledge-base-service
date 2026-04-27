@@ -118,6 +118,34 @@ def query_failed(limit: int = 100) -> list[FileIndex]:
         ).scalars())
 
 
+def mark_deleted(file_path: str) -> None:
+    """Soft-delete a file_index row — keeps history but flips status."""
+    with session() as s:
+        existing = s.get(FileIndex, file_path)
+        if existing is not None:
+            existing.status = "deleted"
+            existing.chunk_ids = []
+            existing.neo4j_node_ids = []
+            existing.dirty = 0
+            existing.indexed_at = _now()
+
+
+def random_sample_indexed(fraction: float = 0.01, limit: int = 200) -> list[FileIndex]:
+    """For the repair sampling sweep — picks a small random subset of
+    indexed files to verify chunk_id consistency."""
+    from sqlalchemy import func
+    with session() as s:
+        # SQLite RANDOM() — not cryptographic but plenty random for sampling.
+        rows = list(s.execute(
+            select(FileIndex)
+            .where(FileIndex.status == "indexed")
+            .order_by(func.random())
+            .limit(limit),
+        ).scalars())
+        keep = max(1, int(len(rows) * fraction)) if rows else 0
+        return rows[:keep]
+
+
 # ── Sync log helpers ───────────────────────────────────────────────────
 
 def record_intent(file_path: str, event_type: str, intent: dict) -> str:

@@ -150,6 +150,17 @@ def insert_parse_result(
     return qns
 
 
+def names_for_file(drv: Driver, file_path: str) -> set[str]:
+    """Short symbol names defined in `file_path`. Used to compute relink
+    candidates after a file changes."""
+    cypher = (
+        "MATCH (n) WHERE n.file_path = $file_path AND n.name IS NOT NULL "
+        "RETURN DISTINCT n.name AS name"
+    )
+    with drv.session() as session:
+        return {r["name"] for r in session.run(cypher, file_path=file_path) if r["name"]}
+
+
 def set_property_by_chunk_id(drv: Driver, chunk_id: str, key: str, value) -> None:
     with drv.session() as session:
         session.run(

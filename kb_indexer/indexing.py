@@ -173,6 +173,23 @@ _DEFAULT_CS_GLOBS = ("**/*.cs",)
 _SKIP_DIR_FRAGMENTS = ("/node_modules/", "/dist/", "/bin/", "/obj/", "/.git/")
 
 
+def delete_file_from_stores(file_path: str, *, qc=None, drv=None) -> None:
+    """Drop a file from Neo4j + every Qdrant collection that may hold
+    its chunks. Idempotent — safe even if the file isn't indexed."""
+    qc = qc or qdrant_store.client()
+    drv = drv or neo4j_store.driver()
+    neo4j_store.delete_by_file(drv, file_path)
+    from .stores.qdrant_store import (
+        CODE_CS, CODE_CS_DESC, CODE_TS, CODE_TS_DESC, DOCS,
+    )
+    for collection in (CODE_TS, CODE_TS_DESC, CODE_CS, CODE_CS_DESC, DOCS):
+        try:
+            qdrant_store.delete_by_file(qc, collection, file_path)
+        except Exception as exc:
+            log.warning("qdrant_delete_failed", collection=collection, file=file_path, error=str(exc))
+    tracker.mark_deleted(file_path)
+
+
 def index_repo(
     *,
     repo: str,
