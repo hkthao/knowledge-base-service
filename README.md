@@ -2,18 +2,18 @@
 
 Index codebase đa ngôn ngữ (TypeScript + C#) cùng với docs và issues vào
 graph database (Neo4j) và hybrid vector store (Qdrant), sau đó expose
-endpoint `/search` có cấu trúc cho n8n agent flow tiêu thụ để compose
-bug analysis, RCA document và triage decision.
+retrieval surface qua **MCP** (cho Claude Desktop / Claude Code / n8n
+MCP node) và **REST `/search`** (cho client không dùng MCP).
 
-KB Service = data plane. n8n = agent / control plane. Hai lớp tách bạch,
-không lẫn vào nhau.
+KB Service = data plane. Agent (n8n hoặc Claude) = control plane. Hai
+lớp tách bạch, không lẫn vào nhau.
 
 ## Mục lục
 
 - [Trạng thái](#trạng-thái)
 - [Quick start](#quick-start)
 - [Cấu hình](#cấu-hình)
-- [Boundary với n8n](#boundary-với-n8n)
+- [Boundary với agent layer](#boundary-với-agent-layer)
 - [Kiến trúc](#kiến-trúc)
 - [Tech stack](#tech-stack)
 - [Nguồn dữ liệu và độ tin cậy](#nguồn-dữ-liệu-và-độ-tin-cậy)
@@ -25,6 +25,7 @@ không lẫn vào nhau.
 - [Search pipeline](#search-pipeline)
 - [Repair và maintenance](#repair-và-maintenance)
 - [API reference](#api-reference)
+- [MCP server](#mcp-server)
 - [Eval methodology](#eval-methodology)
 - [Layout](#layout)
 - [Tests](#tests)
@@ -47,7 +48,7 @@ change detection từ git, và toàn bộ pipeline `/search`.
 - ✅ Tuần 6 — `/search` + graph expansion + cross-encoder rerank + Langfuse
 - ⏳ Tuần 7–8 — Eval (golden set + iterate)
 - ⏳ Tuần 9 — Hardening
-- ⏳ Tuần 10–11 — n8n integration polish
+- ⏳ Tuần 10–11 — Agent integration polish (MCP cho Claude Desktop / n8n MCP node + Git webhook)
 
 ---
 
@@ -105,21 +106,28 @@ nếu muốn dùng model local.
 
 ---
 
-## Boundary với n8n
+## Boundary với agent layer
 
 ```text
 ┌─────────────────────────────────┐     ┌──────────────────────────────┐
-│         KB SERVICE              │     │         n8n                  │
+│         KB SERVICE              │     │   AGENT (n8n hoặc Claude)    │
 │                                 │     │                              │
 │  - Index codebase               │     │  - Triage bug description    │
-│  - Index docs / issues          │     │  - Quyết định query gì       │
-│  - Hybrid search (dense+BM25)   │◄────│  - Gọi /search nhiều lần    │
+│  - Index docs / issues          │ MCP │  - Quyết định query gì       │
+│  - Hybrid search (dense+BM25)   │◄────│  - Gọi `search` nhiều lần   │
 │  - Graph expand (callers...)    │────►│  - Compose bug analysis doc  │
-│  - Incremental update           │     │  - Self-check output         │
-│  - Trả structured context JSON  │     │  - Severity gating           │
+│  - Incremental update           │ HTTP│  - Self-check output         │
+│  - Trả structured JSON          │     │  - Severity gating           │
 │                                 │     │  - Tạo Redmine task          │
 └─────────────────────────────────┘     └──────────────────────────────┘
 ```
+
+Agent layer giao tiếp qua một trong hai surface:
+
+- **MCP** (stdio) — Claude Desktop, Claude Code, n8n MCP node, IDE
+  extensions. Là path khuyến nghị cho mọi LLM-driven flow.
+- **REST** (`POST /search` ...) — cho automation/script không dùng MCP
+  (vd: Git webhook → `POST /index/changes`).
 
 ---
 
@@ -147,9 +155,9 @@ nếu muốn dùng model local.
 └───────────┘                    └────────────┘
 ```
 
-n8n gọi `POST /search` và nhận structured JSON context. Việc n8n làm gì
-với context đó — agent loop, severity gate, tạo Redmine — nằm ngoài phạm
-vi service này.
+Agent (qua MCP tool `search` hoặc HTTP `POST /search`) nhận structured
+JSON context. Việc agent làm gì với context đó — agent loop, severity
+gate, tạo Redmine — nằm ngoài phạm vi service này.
 
 ---
 
@@ -420,8 +428,8 @@ tiếp theo trên cache nóng chỉ tốn 1–3 giây.
 ### Discovery `project_path`
 
 File không tự mang `.csproj` của nó trong path. KB tự lo: `CsprojResolver`
-walk-up từ mỗi file `.cs` về `.csproj` chủ sở hữu sâu nhất. n8n không bao
-giờ phải gửi `project_path` trong webhook trừ khi muốn override.
+walk-up từ mỗi file `.cs` về `.csproj` chủ sở hữu sâu nhất. Agent không
+bao giờ phải gửi `project_path` trong webhook trừ khi muốn override.
 
 ### Internal namespace allowlist
 
@@ -710,7 +718,7 @@ POST /index/doc/file
 Body: {"file_path": "/docs/architecture.md", "repo": "..."}
 ```
 
-### Search (n8n gọi các endpoint này)
+### Search (agent gọi qua REST — hoặc dùng MCP tool tương đương)
 
 ```http
 POST /search
@@ -728,7 +736,7 @@ Body: {
 
 POST /search/symbol
 Body: {"qualified_name": "src/auth/validator.ts::validateUser"}
-→ Lookup chính xác (Neo4j) — dùng khi n8n đã có name
+→ Lookup chính xác (Neo4j) — dùng khi agent đã có name
 
 POST /search/callers
 Body: {"chunk_id": "...", "max_hops": 2}
@@ -747,6 +755,67 @@ GET  /health                  -- liveness Neo4j + Qdrant + Roslyn
 GET  /stats                   -- count per-collection + tổng kết desc-job
 GET  /stats/consistency       -- list file mà Qdrant ↔ tracker drift
 POST /repair                  -- retry failed, drain dirty, sample sweep
+```
+
+---
+
+## MCP server
+
+Ngoài REST API, KB còn expose retrieval surface qua **Model Context
+Protocol** (MCP) để các MCP-compatible client (Claude Desktop, Claude
+Code, n8n MCP node, IDE extensions...) gọi trực tiếp.
+
+Server chạy stdio — entrypoint là `kb_indexer.mcp_server`:
+
+```bash
+.venv/bin/python -m kb_indexer.mcp_server
+```
+
+Server import trực tiếp các module Python của KB; không cần `/search`
+HTTP server chạy song song. Vẫn cần Neo4j + Qdrant + (optional) Roslyn
+sẵn sàng.
+
+### Tools exposed
+
+| Tool | Mục đích |
+|---|---|
+| `search` | Hybrid search dense + BM25 + RRF, kèm graph_context. Tham số: `query`, `top_k`, `collections?`, `filters?`, `expand_graph`, `rerank`. |
+| `lookup_symbol` | Tra entity theo `qualified_name`. |
+| `find_callers` | Caller chain 1–N hop từ một `chunk_id`. |
+| `find_callees` | Callee chain 1–N hop từ một `chunk_id`. |
+| `find_co_changed` | Module hay thay đổi cùng một file trong lịch sử git. |
+| `kb_stats` | Qdrant points + breakdown trạng thái desc_jobs. |
+
+`chunk_id` từ `search` / `lookup_symbol` chain thẳng vào các graph tool.
+
+### Cấu hình client
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+hoặc **Claude Code** (`~/.claude.json` mục `mcpServers`):
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base": {
+      "command": "/path/to/knowledge-base-service/.venv/bin/python",
+      "args": ["-m", "kb_indexer.mcp_server"],
+      "cwd": "/path/to/knowledge-base-service"
+    }
+  }
+}
+```
+
+`cwd` cần thiết để KB tìm được `data/index_state.db` (SQLite WAL) và
+load `.env`. Đường dẫn tuyệt đối tới Python interpreter trong venv —
+KB sẽ inherit env biến (`NEO4J_PASSWORD`, `OLLAMA_URL`, ...) từ
+`.env` đã setup.
+
+### Verify nhanh
+
+```bash
+# List tools (handshake stdio rồi exit)
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | .venv/bin/python -m kb_indexer.mcp_server
 ```
 
 ---
@@ -831,6 +900,7 @@ kb_indexer/                 Python service (port 8000)
   indexing.py               pipeline idempotent index_file / index_doc
   repair.py                 retry failed + drain dirty + sample sweep
   tracing.py                Langfuse trace_search context manager (no-op nếu unset)
+  mcp_server.py             FastMCP server (stdio) — 6 tools cho Claude Desktop / Code
   api/                      FastAPI routers (health, index, maintenance, search)
 
 roslyn-service/             .NET 8 minimal API (port 5000)
@@ -847,7 +917,7 @@ scripts/                    setup + initial index utilities
   build_co_change.py        ghi CO_CHANGED edge từ lịch sử git
   repair.py                 repair pass cron-friendly chạy một lần
 
-tests/                      67 unit tests (pytest)
+tests/                      72 unit tests (pytest)
 ```
 
 ---
@@ -859,7 +929,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/pytest tests/
 ```
 
-67 unit tests cover:
+72 unit tests cover:
 
 - `ts_parser` — extract entity TS/JS, qualified name, edge CALLS / IMPORTS / EXTENDS
 - `csharp_parser_bridge` — Roslyn HTTP bridge (mock qua `httpx.MockTransport`)
@@ -879,6 +949,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 - `filters` — dict phẳng → Qdrant `Filter` (scalar, list, None handling)
 - `context_packer` — drop field None, attach `graph_context` theo `chunk_id`
 - `search_pipeline` — shape response packed, dedup description→code, filter pass-through, rerank fallback
+- `mcp_server` — registration đủ 6 tool, schema có `query` required, từng tool delegate đúng vào pipeline / graph_expand
 
 Test `relinker` và git-based cần `rg` và `git` trên PATH; auto-skip nếu
 thiếu.
@@ -898,11 +969,11 @@ chạy eval.
 | 3 | Roslyn service + C# indexing | name dạng `MyProject.Auth::AuthService.Login`; CALLS edge confidence=1.0 (semantic) |
 | 4 | Description tiếng Việt + docs | "kiểm tra hạn mức tín dụng" → trả về function tên tiếng Anh |
 | 5 | Change management | Rename class → `qualified_name` update đúng cả 2 stores < 30s; không có orphan node |
-| 6 | Search & context packing | n8n nhận caller chain + co_changed + related_issues (flag low) trong một call |
+| 6 | Search & context packing | Agent nhận caller chain + co_changed + related_issues (flag low) trong một call |
 | 7 | Eval — build & baseline | Golden set + eval harness chạy được, baseline P@5 / MRR đã ghi |
 | 8 | Eval — iterate | P@5 ≥ 0.75 trên golden set commit-based |
 | 9 | Hardening | p95 ≤ 2s, throughput ≥ 100 file/phút, repair stress-tested |
-| 10–11 | Polish n8n integration | n8n workflow Git webhook → `/index/changes`, runbook re-index / repair |
+| 10–11 | Polish agent integration | Cấu hình MCP cho Claude Desktop / n8n MCP node + Git webhook → `/index/changes`, runbook re-index / repair |
 
 ---
 
@@ -917,7 +988,7 @@ chạy eval.
 | BM25 hybrid search | ✅ | |
 | CO_CHANGED edge | ✅ | |
 | Change management idempotent | ✅ | |
-| AnythingLLM UI | | ✅ |
+| MCP server (stdio) | ✅ | |
 | Multi-version doc tracking | | ✅ |
 | Dynamic dispatch resolution (C#) | | ✅ |
 
@@ -940,5 +1011,5 @@ chạy eval.
 | Cache Roslyn stale sau khi sửa file | Cao | `AnalyzeFileAsync` đọc disk + `TryApplyChanges`; `/cache/invalidate` cho re-index lớn |
 | Concurrent request đua nhau load workspace | Trung bình | `ConcurrentDictionary<Lazy<Task<…>>>` collapse về single load |
 | Description backlog tồn đọng nhiều ngày | Trung bình | Async queue + `description_status`; `/stats` báo coverage; code search vẫn hoạt động |
-| n8n bị ép phải biết `.csproj` của từng `.cs` | Trung bình | KB resolve qua `CsprojResolver`; override qua repo-config nếu cần |
+| Agent bị ép phải biết `.csproj` của từng `.cs` | Trung bình | KB resolve qua `CsprojResolver`; override qua repo-config nếu cần |
 | Mass-format commit phá CO_CHANGED | Trung bình | Loại commit chạm > 30 source file |
