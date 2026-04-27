@@ -21,13 +21,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-
   kb-indexer:
     build: .
     ports:
@@ -37,7 +30,10 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-changeme-please}
       - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://ollama:11434
+      # Ollama chạy trên host (không trong compose). host.docker.internal
+      # work trên Docker Desktop (Mac/Win) và Linux Docker 20.10+ với
+      # extra_hosts ở dưới.
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - ROSLYN_URL=http://roslyn-service:5000
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - LANGFUSE_HOST=http://langfuse:3000
@@ -47,10 +43,13 @@ services:
       - ./repos:/repos
       - ./documents:/documents
       - ./data:/app/data
+    extra_hosts:
+      # Cần cho Linux để host.docker.internal resolve về host. Mac/Win
+      # Docker Desktop tự cấp DNS này, dòng này thừa nhưng vô hại.
+      - "host.docker.internal:host-gateway"
     depends_on:
       - neo4j
       - qdrant
-      - ollama
       - roslyn-service
 
   roslyn-service:
@@ -100,5 +99,4 @@ services:
 volumes:
   neo4j_data:
   qdrant_data:
-  ollama_data:
   langfuse_db_data:
