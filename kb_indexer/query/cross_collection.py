@@ -63,3 +63,32 @@ def merge_code_and_desc_hits(
         hit.setdefault("matched_via", "code")
 
     return rrf_merge([code_hits, rewritten_desc])
+
+
+def merge_collection_hits(
+    hits_by_collection: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Generalised version: takes per-collection hit lists and runs RRF.
+
+    A hit from a `_desc` collection gets rewritten to point at its
+    linked code chunk's id, so a single result row carries both signals
+    (the `matched_via` field tells the caller which path scored).
+    """
+    ranked_lists: list[list[dict[str, Any]]] = []
+    for collection, hits in hits_by_collection.items():
+        is_desc = collection.endswith("_desc")
+        rewritten: list[dict[str, Any]] = []
+        for hit in hits:
+            view = dict(hit)
+            view["matched_collection"] = collection
+            if is_desc:
+                linked = hit.get("linked_chunk_id")
+                if not linked:
+                    continue
+                view["chunk_id"] = linked
+                view["matched_via"] = "description"
+            else:
+                view.setdefault("matched_via", "code" if collection.startswith("code_") else collection)
+            rewritten.append(view)
+        ranked_lists.append(rewritten)
+    return rrf_merge(ranked_lists)

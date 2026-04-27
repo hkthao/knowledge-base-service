@@ -20,6 +20,7 @@ voyageai==0.2.4
 anthropic==0.39.0
 
 sentence-transformers==3.1.1
+langfuse==2.50.0
 
 python-dotenv==1.0.1
 structlog==24.4.0

@@ -1,4 +1,8 @@
-from kb_indexer.query.cross_collection import merge_code_and_desc_hits, rrf_merge
+from kb_indexer.query.cross_collection import (
+    merge_code_and_desc_hits,
+    merge_collection_hits,
+    rrf_merge,
+)
 
 
 def test_rrf_merge_ranks_overlap_higher():
@@ -42,3 +46,30 @@ def test_description_only_match_surfaces_code_chunk_id():
     assert len(merged) == 1
     assert merged[0]["chunk_id"] == "code-7"
     assert merged[0]["matched_via"] == "description"
+
+
+def test_merge_collection_hits_dedupes_desc_via_linked_chunk_id():
+    out = merge_collection_hits({
+        "code_ts": [{"chunk_id": "code-9", "qualified_name": "checkLimit"}],
+        "code_ts_desc": [{
+            "chunk_id": "desc-9",
+            "linked_chunk_id": "code-9",
+            "qualified_name": "checkLimit",
+            "content": "Kiểm tra hạn mức",
+        }],
+    })
+    assert len(out) == 1
+    assert out[0]["chunk_id"] == "code-9"
+    # Both signals contributed to RRF — score is the sum, so > single-list
+    assert out[0]["score"] > 1 / (60 + 1)
+
+
+def test_merge_collection_hits_includes_docs_unchanged():
+    out = merge_collection_hits({
+        "code_ts": [{"chunk_id": "code-1"}],
+        "docs": [{"chunk_id": "doc-1", "title": "Auth flow"}],
+    })
+    chunk_ids = {h["chunk_id"] for h in out}
+    assert chunk_ids == {"code-1", "doc-1"}
+    doc_hit = next(h for h in out if h["chunk_id"] == "doc-1")
+    assert doc_hit["matched_via"] == "docs"
