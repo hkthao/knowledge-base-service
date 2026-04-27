@@ -1,0 +1,9 @@
+{
+  "name": "sample-ts",
+  "version": "1.0.0",
+  "description": "Sample TS repo cho KB indexer test fixtures",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  }
+}

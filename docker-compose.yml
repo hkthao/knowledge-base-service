@@ -45,7 +45,7 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
     volumes:
       - ./repos:/repos
-      - ./docs:/docs
+      - ./documents:/documents
       - ./data:/app/data
     depends_on:
       - neo4j
