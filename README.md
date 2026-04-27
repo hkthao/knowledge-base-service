@@ -1,44 +1,44 @@
 # Knowledge Base Service
 
-Index a polyglot codebase (TypeScript + C#) plus its docs and issues into
-a graph database (Neo4j) and a hybrid vector store (Qdrant), then expose
-a structured `/search` endpoint that n8n agent flows consume to assemble
-bug analyses, RCA documents, and triage decisions.
+Index codebase đa ngôn ngữ (TypeScript + C#) cùng với docs và issues vào
+graph database (Neo4j) và hybrid vector store (Qdrant), sau đó expose
+endpoint `/search` có cấu trúc cho n8n agent flow tiêu thụ để compose
+bug analysis, RCA document và triage decision.
 
-KB Service = data plane. n8n = agent / control plane. They never bleed
-into each other.
+KB Service = data plane. n8n = agent / control plane. Hai lớp tách bạch,
+không lẫn vào nhau.
 
-## Contents
+## Mục lục
 
-- [Status](#status)
+- [Trạng thái](#trạng-thái)
 - [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [Boundary with n8n](#boundary-with-n8n)
-- [Architecture](#architecture)
+- [Cấu hình](#cấu-hình)
+- [Boundary với n8n](#boundary-với-n8n)
+- [Kiến trúc](#kiến-trúc)
 - [Tech stack](#tech-stack)
-- [Data sources and reliability](#data-sources-and-reliability)
+- [Nguồn dữ liệu và độ tin cậy](#nguồn-dữ-liệu-và-độ-tin-cậy)
 - [Neo4j graph schema](#neo4j-graph-schema)
-- [Qdrant collections and payload](#qdrant-collections-and-payload)
+- [Qdrant collections và payload](#qdrant-collections-và-payload)
 - [Roslyn service](#roslyn-service)
-- [Synthetic Vietnamese descriptions](#synthetic-vietnamese-descriptions)
+- [Synthetic description tiếng Việt](#synthetic-description-tiếng-việt)
 - [Change management](#change-management)
 - [Search pipeline](#search-pipeline)
-- [Repair and maintenance](#repair-and-maintenance)
+- [Repair và maintenance](#repair-và-maintenance)
 - [API reference](#api-reference)
 - [Eval methodology](#eval-methodology)
 - [Layout](#layout)
 - [Tests](#tests)
 - [Timeline](#timeline)
 - [Scope v1 vs v2](#scope-v1-vs-v2)
-- [Risks and mitigations](#risks-and-mitigations)
+- [Rủi ro và phương án](#rủi-ro-và-phương-án)
 
 ---
 
-## Status
+## Trạng thái
 
-Weeks 1–6 of the 11-week plan are implemented. The service has end-to-end
-indexing for both languages, async description generation, change
-detection from git, and the full `/search` pipeline.
+Tuần 1–6 trong kế hoạch 11 tuần đã hoàn thành. Service đã có pipeline
+indexing đầy đủ cho cả hai ngôn ngữ, async description generation,
+change detection từ git, và toàn bộ pipeline `/search`.
 
 - ✅ Tuần 1–2 — Foundation TS/JS + dual stores (Neo4j + Qdrant hybrid)
 - ✅ Tuần 3 — Roslyn .NET service + C# semantic analysis
@@ -56,10 +56,10 @@ detection from git, and the full `/search` pipeline.
 ```bash
 cp .env.example .env
 
-# Bring up infra: Neo4j 5 + Qdrant + Ollama + Roslyn .NET service + Langfuse
+# Bật infra: Neo4j 5 + Qdrant + Ollama + Roslyn .NET service + Langfuse
 docker compose up -d neo4j qdrant ollama roslyn-service
 
-# Pull embedding models (first run only)
+# Pull embedding models (chỉ chạy lần đầu)
 docker compose exec ollama ollama pull nomic-embed-text
 docker compose exec ollama ollama pull nomic-embed-code   # ~2GB
 
@@ -67,68 +67,63 @@ docker compose exec ollama ollama pull nomic-embed-code   # ~2GB
 python -m scripts.setup_neo4j
 python -m scripts.setup_collections
 
-# Index a repo (auto-detects .ts/.tsx/.js/.jsx and .cs files)
+# Index một repo (auto-detect .ts/.tsx/.js/.jsx và .cs)
 python -m scripts.initial_index --repo my-project --path /path/to/repo
 
-# Drain the Vietnamese description queue (long-running)
+# Drain hàng đợi sinh description tiếng Việt (chạy lâu dài)
 python -m scripts.desc_worker
 
-# Build module-level CO_CHANGED edges from git history
+# Build CO_CHANGED edges ở mức module từ lịch sử git
 python -m scripts.build_co_change --path /path/to/repo
 
-# Cron every 15 minutes — bounded sweep, never O(n)
+# Cron mỗi 15 phút — sweep có giới hạn, không bao giờ O(n)
 python -m scripts.repair --repo-path /path/to/repo
 ```
 
-For C# repos KB auto-discovers each `.cs` file's owning `.csproj` via
-`CsprojResolver` — no extra config required.
+Với repo C#, KB tự discover `.csproj` chủ sở hữu cho từng file `.cs` qua
+`CsprojResolver` — không cần config thêm.
 
 ---
 
-## Configuration
+## Cấu hình
 
-Set these in `.env` (see `.env.example` for the full list):
+Đặt các biến sau trong `.env` (xem `.env.example` cho danh sách đầy đủ):
 
-| Var | Purpose | Default |
+| Biến | Mục đích | Mặc định |
 |---|---|---|
 | `NEO4J_PASSWORD` | Neo4j auth | `changeme-please` |
-| `VOYAGE_API_KEY` | If set, initial index uses voyage-code-2 (~5–10× faster than Ollama on CPU); otherwise falls back to local Ollama nomic-embed-code | unset |
-| `ANTHROPIC_API_KEY` | Vietnamese description generator (Haiku 4.5) | unset |
-| `DESCRIPTION_LLM_BACKEND` | `anthropic` or `ollama` | `anthropic` |
-| `INTERNAL_NS_PREFIXES` | Comma-separated C# namespace prefixes whose calls Roslyn keeps even when the symbol's source lives in NuGet metadata only | unset |
-| `LANGFUSE_HOST`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY` | If all three set, every `/search` call is traced; otherwise tracing is a no-op | unset |
+| `VOYAGE_API_KEY` | Nếu set, initial index dùng voyage-code-2 (~5–10× nhanh hơn Ollama trên CPU); nếu không thì fallback về Ollama nomic-embed-code | unset |
+| `ANTHROPIC_API_KEY` | LLM cho description tiếng Việt (Haiku 4.5) | unset |
+| `DESCRIPTION_LLM_BACKEND` | `anthropic` hoặc `ollama` | `anthropic` |
+| `INTERNAL_NS_PREFIXES` | Comma-separated C# namespace prefix mà Roslyn vẫn giữ CALLS edge dù symbol nằm trong NuGet metadata | unset |
+| `LANGFUSE_HOST`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY` | Nếu cả 3 đều set, mỗi `/search` được trace; ngược lại trace là no-op | unset |
 
-If `ANTHROPIC_API_KEY` is unset and the backend is `anthropic`, the
-description worker fails fast on each job and marks them for retry —
-code chunks remain searchable in `code_*` either way. Switch to
-`DESCRIPTION_LLM_BACKEND=ollama` to use a local model instead.
+Nếu `ANTHROPIC_API_KEY` không set và backend đang là `anthropic`,
+description worker fail-fast cho từng job và mark để retry — code chunks
+vẫn search được trong `code_*`. Đổi sang `DESCRIPTION_LLM_BACKEND=ollama`
+nếu muốn dùng model local.
 
 ---
 
-## Boundary with n8n
+## Boundary với n8n
 
 ```text
 ┌─────────────────────────────────┐     ┌──────────────────────────────┐
 │         KB SERVICE              │     │         n8n                  │
 │                                 │     │                              │
 │  - Index codebase               │     │  - Triage bug description    │
-│  - Index docs / issues          │     │  - Decide what to query      │
-│  - Hybrid search (dense+BM25)   │◄────│  - Call /search multiple     │
-│  - Graph expand (callers...)    │────►│    times                     │
-│  - Incremental update           │     │  - Compose bug analysis doc  │
-│  - Return structured JSON       │     │  - Self-check output         │
-│                                 │     │  - Severity gating           │
-│                                 │     │  - Create Redmine task       │
+│  - Index docs / issues          │     │  - Quyết định query gì       │
+│  - Hybrid search (dense+BM25)   │◄────│  - Gọi /search nhiều lần    │
+│  - Graph expand (callers...)    │────►│  - Compose bug analysis doc  │
+│  - Incremental update           │     │  - Self-check output         │
+│  - Trả structured context JSON  │     │  - Severity gating           │
+│                                 │     │  - Tạo Redmine task          │
 └─────────────────────────────────┘     └──────────────────────────────┘
 ```
 
-KB Service has **no `/analyze` endpoint**. KB Service knows nothing about
-the bug-doc schema or the agent flow. It indexes data and returns context.
-That's it.
-
 ---
 
-## Architecture
+## Kiến trúc
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
@@ -140,7 +135,7 @@ That's it.
    │                 │                  │
    │  ┌──────────────▼─────┐   ┌────────▼──────────┐
    │  │  roslyn-service    │   │  desc-worker      │
-   │  │  :5000  (.NET 8)   │   │  drains desc_jobs │
+   │  │  :5000  (.NET 8)   │   │  drain desc_jobs  │
    │  │  C# semantic       │   │  → code_*_desc    │
    │  │  analysis          │   │  (Haiku / Ollama) │
    │  └────────────────────┘   └───────────────────┘
@@ -152,9 +147,9 @@ That's it.
 └───────────┘                    └────────────┘
 ```
 
-n8n calls `POST /search` and receives a structured JSON context. Whatever
-n8n does with that context — agent loops, severity gating, Redmine
-creation — is outside this service.
+n8n gọi `POST /search` và nhận structured JSON context. Việc n8n làm gì
+với context đó — agent loop, severity gate, tạo Redmine — nằm ngoài phạm
+vi service này.
 
 ---
 
@@ -162,62 +157,62 @@ creation — is outside this service.
 
 ### Parsing
 
-| Tool | Purpose | Runtime | License |
+| Tool | Mục đích | Runtime | License |
 |---|---|---|---|
-| `tree-sitter` + `tree-sitter-typescript` | Parse AST for TS/JS | Python | MIT |
-| `Roslyn` (`Microsoft.CodeAnalysis.CSharp`) | Semantic analysis for C# | **.NET 8** | MIT |
-| `Microsoft.Build.Locator` | Load `.csproj` workspace for Roslyn | .NET 8 | MIT |
+| `tree-sitter` + `tree-sitter-typescript` | Parse AST cho TS/JS | Python | MIT |
+| `Roslyn` (`Microsoft.CodeAnalysis.CSharp`) | Semantic analysis cho C# | **.NET 8** | MIT |
+| `Microsoft.Build.Locator` | Load workspace `.csproj` cho Roslyn | .NET 8 | MIT |
 | `Docling` (IBM, optional) | Parse PDF / DOCX / HTML | Python | MIT |
 | `ripgrep` | Cross-file symbol lookup | Any | MIT |
 
 ### Storage
 
-| Tool | Purpose | License |
+| Tool | Mục đích | License |
 |---|---|---|
 | `Neo4j Community 5` + APOC | Graph database | GPL-3.0 |
 | `neo4j-driver` (Python) | Neo4j client | Apache 2.0 |
 | `Qdrant` | Vector DB — dense + BM25 sparse | Apache 2.0 |
 | `SQLite` (WAL mode) | Index state tracker | Public Domain |
 
-If GPL-3.0 is a blocker on Neo4j, **Memgraph** (BSL) and **FalkorDB**
-(MIT) speak the same Cypher and are drop-in alternatives.
+Nếu GPL-3.0 của Neo4j là vấn đề, **Memgraph** (BSL) và **FalkorDB** (MIT)
+dùng cùng Cypher syntax và là drop-in alternative.
 
 ### Embedding & search
 
-| Tool | Purpose | License |
+| Tool | Mục đích | License |
 |---|---|---|
-| `Ollama` + `nomic-embed-code` | Local code embeddings (incremental) | Apache 2.0 |
-| `voyage-code-2` API | Fast initial full index (~5–10× faster on CPU) | Commercial |
-| `Ollama` + `nomic-embed-text` | Local text embeddings (descriptions, docs) | Apache 2.0 |
+| `Ollama` + `nomic-embed-code` | Embedding code local (incremental) | Apache 2.0 |
+| `voyage-code-2` API | Initial full index nhanh (~5–10× trên CPU) | Commercial |
+| `Ollama` + `nomic-embed-text` | Embedding text local (descriptions, docs) | Apache 2.0 |
 | `fastembed` + `Qdrant/bm25` | BM25 sparse encoding | Apache 2.0 |
 | `sentence-transformers` + `ms-marco-MiniLM-L-6-v2` | Cross-encoder rerank | Apache 2.0 |
 
-Throughput on CPU: Ollama embeds at ~100 files/min. Use `voyage-code-2`
-for initial full index, then run incremental updates against local Ollama.
+Throughput trên CPU: Ollama embed ~100 file/phút. Dùng `voyage-code-2`
+cho initial full index, sau đó incremental dùng Ollama local là đủ.
 
 ### API & observability
 
-| Tool | Purpose | License |
+| Tool | Mục đích | License |
 |---|---|---|
 | `FastAPI` | REST API | MIT |
-| `SQLAlchemy` | ORM for SQLite state | MIT |
-| `Anthropic SDK` | Haiku 4.5 for Vietnamese descriptions | Commercial |
-| `Langfuse` | Trace every `/search` call | MIT |
+| `SQLAlchemy` | ORM cho SQLite state | MIT |
+| `Anthropic SDK` | Haiku 4.5 cho description tiếng Việt | Commercial |
+| `Langfuse` | Trace mọi `/search` call | MIT |
 
 ---
 
-## Data sources and reliability
+## Nguồn dữ liệu và độ tin cậy
 
-`source_reliability` rides in every chunk's payload — n8n picks which
-tier to trust at query time via the `filters` parameter.
+`source_reliability` đi kèm trong payload của mọi chunk — n8n tự chọn
+tier nào để tin cậy ở thời điểm query qua tham số `filters`.
 
-| Source | Role | `source_reliability` | Notes |
+| Nguồn | Vai trò | `source_reliability` | Ghi chú |
 |---|---|---|---|
-| C# codebase | ~60% of code | `high` | Source of truth — Roslyn semantic analysis |
-| TS / JS codebase | ~40% of code | `high` | Source of truth — tree-sitter parsing |
-| Technical docs (Markdown / PDF) | Authoritative behavior | `high` | What the system *should* do |
-| Git history / commits | Change context | `medium` | Quality scales with commit-message hygiene |
-| Tickets (Redmine) | Weak signal | `low` | Only useful for "has this been mentioned before" + terminology |
+| Codebase C# | Code thực tế (~60%) | `high` | Source of truth — Roslyn semantic analysis |
+| Codebase TS / JS | Code thực tế (~40%) | `high` | Source of truth — tree-sitter |
+| Tài liệu kỹ thuật (Markdown / PDF) | Hành vi đúng | `high` | Mô tả "phải làm gì" |
+| Git history / commits | Change context | `medium` | Chất lượng phụ thuộc commit message |
+| Tickets (Redmine) | Weak signal | `low` | Chỉ hữu ích để check "đã từng nhắc chưa" + lấy terminology |
 
 ---
 
@@ -225,7 +220,7 @@ tier to trust at query time via the `filters` parameter.
 
 ### Node labels
 
-| Label | Key properties |
+| Label | Thuộc tính chính |
 |---|---|
 | `Function` | `chunk_id`*, `qualified_name`*, `name`, `file_path`, `line_start`, `line_end`, `signature`, `docstring`, `synthetic_description_vi` |
 | `Method` | `chunk_id`*, `qualified_name`*, `name`, `class_name`, `file_path`, `line_start`, `line_end`, `visibility` |
@@ -235,13 +230,13 @@ tier to trust at query time via the `filters` parameter.
 | `Issue` | `chunk_id`*, `issue_id`, `title`, `status`, `source_reliability: "low"` |
 | `Commit` | `commit_hash`*, `message`, `author`, `date` |
 
-`*` = unique constraint. `qualified_name` is the canonical lookup key —
-**never query by `{name: $name}`**, that collides whenever two modules
-expose a same-named symbol.
+`*` = unique constraint. `qualified_name` là canonical lookup key —
+**không bao giờ query bằng `{name: $name}`**, dễ collision khi hai module
+expose symbol cùng tên.
 
-### `qualified_name` convention
+### Convention `qualified_name`
 
-**TypeScript / JavaScript** — file path scoped:
+**TypeScript / JavaScript** — scope theo file path:
 
 ```text
 Function:  src/auth/validator.ts::validateUser
@@ -250,8 +245,8 @@ Class:     src/auth/AuthService.ts::AuthService
 Module:    src/auth/validator.ts
 ```
 
-**C#** — namespace scoped (because partial classes can split across
-multiple files; namespace + class + member is the only unambiguous key):
+**C#** — scope theo namespace (vì partial class có thể tách qua nhiều
+file; namespace + class + member là key duy nhất không mâu thuẫn):
 
 ```text
 Method:    MyProject.Auth::AuthService.Login
@@ -261,56 +256,55 @@ Interface: MyProject.Auth::IAuthService
 
 ### Relationship types
 
-| Relationship | From → To | Properties |
+| Relationship | Từ → Đến | Thuộc tính |
 |---|---|---|
 | `CALLS` | Function/Method → Function/Method | `confidence: float` |
 | `IMPORTS` | Module → Module/Class | `confidence: float` |
 | `EXTENDS` | Class → Class | `confidence: float` (1.0 C# semantic, 0.7 TS heuristic) |
-| `IMPLEMENTS` | Class → Class | `confidence: float` (same rules as EXTENDS) |
+| `IMPLEMENTS` | Class → Class | `confidence: float` (cùng rule với EXTENDS) |
 | `DEFINES` | Module → Function/Class/Method | — |
 | `USES_TYPE` | Function/Method → Class | `confidence: float` |
 | `REFERENCES` | Issue → Function/Class | `source_reliability: "low"` |
 | `CO_CHANGED` | Module ↔ Module | `count: int, last_seen: date` |
 | `TOUCHED_BY` | Commit → Module | — |
 
-**CO_CHANGED is module-level, not symbol-level** — git diff doesn't
-expose per-symbol granularity cheaply. Module signal is enough; if a
-symbol-level view is later needed, build it from `git blame` rather than
-`git log`.
+**CO_CHANGED ở mức Module, không phải symbol** — git diff không cho
+granularity ở mức symbol rẻ tiền. Tín hiệu Module-level đã đủ; nếu sau
+này cần view symbol-level, build từ `git blame` thay vì `git log`.
 
 ### CALLS confidence
 
 | Resolution | Confidence |
 |---|---|
-| C# semantic (Roslyn) — any call | 1.0 |
+| C# semantic (Roslyn) — bất kỳ call nào | 1.0 |
 | TS same-file, name resolved | 0.9 |
 | TS cross-file, import resolved | 0.7 |
 | TS cross-file, name match heuristic | 0.5 |
-| Dynamic dispatch (`this[method]()`) | (no edge — known limitation) |
+| Dynamic dispatch (`this[method]()`) | (không tạo edge — known limitation) |
 
-n8n receives `confidence` in every relation payload and decides whether
-to verify further or downweight low-confidence edges.
+n8n nhận `confidence` trong payload mọi relation và tự quyết định verify
+thêm hay downweight các edge confidence thấp.
 
 ### Sample Cypher queries
 
 ```cypher
--- Caller chain: who calls this symbol?
+-- Caller chain: ai gọi symbol này?
 MATCH (caller)-[:CALLS*1..3]->(fn)
 WHERE fn.chunk_id = $chunk_id
 RETURN caller.qualified_name, caller.file_path, caller.line_start
 
--- Callee chain: what does this symbol call?
+-- Callee chain: symbol này gọi gì?
 MATCH (fn)-[:CALLS*1..3]->(callee)
 WHERE fn.chunk_id = $chunk_id
 RETURN callee.qualified_name, callee.file_path
 
--- Co-changed modules
+-- Module hay sửa cùng nhau
 MATCH (m:Module {qualified_name: $file_path})-[r:CO_CHANGED]-(other:Module)
 WHERE r.count >= 3
 RETURN other.qualified_name, r.count
 ORDER BY r.count DESC
 
--- Recent commits touching a file
+-- Commit gần đây chạm vào file
 MATCH (c:Commit)-[:TOUCHED_BY]->(m:Module {qualified_name: $file_path})
 RETURN c.message, c.author, c.date
 ORDER BY c.date DESC LIMIT 5
@@ -323,25 +317,24 @@ RETURN parent.qualified_name, labels(parent)
 
 ---
 
-## Qdrant collections and payload
+## Qdrant collections và payload
 
-### Six collections
+### Sáu collections
 
-| Collection | Content | Dense model |
+| Collection | Nội dung | Dense model |
 |---|---|---|
-| `code_ts` | TS/JS functions / classes — actual source code | `nomic-embed-code` |
-| `code_ts_desc` | Vietnamese business descriptions of TS/JS symbols | `nomic-embed-text` |
-| `code_cs` | C# methods / classes — actual source code | `nomic-embed-code` |
-| `code_cs_desc` | Vietnamese business descriptions of C# symbols | `nomic-embed-text` |
-| `docs` | README, technical docs (Markdown, optional PDF/DOCX via Docling) | `nomic-embed-text` |
-| `issues` | Redmine tickets — flagged `source_reliability: low` | `nomic-embed-text` |
+| `code_ts` | TS/JS function / class — code thật | `nomic-embed-code` |
+| `code_ts_desc` | Description nghiệp vụ tiếng Việt cho TS/JS | `nomic-embed-text` |
+| `code_cs` | C# method / class — code thật | `nomic-embed-code` |
+| `code_cs_desc` | Description nghiệp vụ tiếng Việt cho C# | `nomic-embed-text` |
+| `docs` | README, tài liệu kỹ thuật (Markdown, optional PDF/DOCX qua Docling) | `nomic-embed-text` |
+| `issues` | Ticket Redmine — flag `source_reliability: low` | `nomic-embed-text` |
 
-**Why split `code_*` and `code_*_desc`** — search on raw code is best
-for keyword-style queries (function names, exception types). Search on
-Vietnamese descriptions is best for business-language queries that
-don't share vocabulary with the code (e.g. "kiểm tra hạn mức tín dụng"
-matches `checkCreditLimit`). Both share `linked_chunk_id` so RRF merge
-dedupes back to a single result row.
+**Tại sao tách `code_*` và `code_*_desc`** — search trên code thật phù
+hợp với query keyword (tên hàm, exception type). Search trên description
+tiếng Việt phù hợp với query nghiệp vụ không trùng vocabulary với code
+(ví dụ "kiểm tra hạn mức tín dụng" match `checkCreditLimit`). Hai
+collection share `linked_chunk_id` để RRF merge dedup về một result row.
 
 ### Payload schema
 
@@ -367,101 +360,97 @@ dedupes back to a single result row.
 }
 ```
 
-Payload indexes: `file_path`, `repo`, `symbol_type`, `is_latest`,
+Payload index: `file_path`, `repo`, `symbol_type`, `is_latest`,
 `source_reliability`, `qualified_name`, `language`, `line_start` (int),
-`confidence` (float). All keyword-typed except the last two.
+`confidence` (float). Tất cả đều keyword-typed trừ hai cái cuối.
 
 ### Hybrid search (dense + BM25 + RRF)
 
-Each collection runs RRF fusion over a dense pre-fetch (Cosine) and a
-sparse pre-fetch (BM25). Across collections, the search pipeline runs
-this on each requested collection, then RRF-merges across collections —
-description hits get rewritten so their `chunk_id` points at the linked
-code chunk's id, dedup'ing back to a single result row.
+Mỗi collection chạy RRF fusion qua dense pre-fetch (Cosine) và sparse
+pre-fetch (BM25). Giữa các collection, search pipeline chạy hybrid trên
+từng collection được yêu cầu rồi RRF-merge cross-collection — description
+hits được rewrite để `chunk_id` trỏ về linked code chunk's id, dedup về
+một result row duy nhất.
 
 ---
 
 ## Roslyn service
 
-### Why a separate service
+### Tại sao cần service riêng
 
 | | tree-sitter (Python) | Roslyn (.NET) |
 |---|---|---|
 | Parse syntax | ✅ | ✅ |
-| Resolve type of a variable | ❌ | ✅ |
-| Know what class `foo.Bar()` calls | ❌ | ✅ |
+| Resolve type của variable | ❌ | ✅ |
+| Biết `foo.Bar()` gọi class nào | ❌ | ✅ |
 | Cross-file call resolution | ❌ | ✅ |
 | Generic type instantiation | ❌ | ✅ |
 | Interface → implementation | ❌ | ✅ |
 | CALLS confidence | 0.5 (heuristic) | **1.0 (semantic)** |
 
-Roslyn is .NET-only. The solution is a `.NET 8` microservice that
-`kb-indexer` calls over HTTP whenever it sees a `.cs` file.
+Roslyn là thư viện .NET, không thể chạy trong Python. Giải pháp: tách
+thành microservice `.NET 8`, `kb-indexer` gọi qua HTTP khi gặp file `.cs`.
 
 ### Endpoints
 
 ```http
-POST /analyze/project        # Full project — initial index
-POST /analyze/file           # Single file — incremental update
-POST /cache/invalidate       # Drop cached MSBuildWorkspace for a project
+POST /analyze/project        # Project đầy đủ — initial index
+POST /analyze/file           # Một file — incremental update
+POST /cache/invalidate       # Bỏ cache MSBuildWorkspace của một project
 GET  /health                 # { status, msbuild_loaded }
 ```
 
-Project mode loads the whole `.csproj` once (slow first call, ~2–10
-minutes depending on project size) and caches the workspace per
-`project_path`. Subsequent file mode calls are 1–3 seconds against the
-warm cache.
+Project mode load toàn bộ `.csproj` một lần (call đầu tiên chậm, ~2–10
+phút tuỳ size project) và cache workspace theo `project_path`. File mode
+tiếp theo trên cache nóng chỉ tốn 1–3 giây.
 
-### Cache safety (the two bugs that have to be right)
+### Cache safety (hai bug bắt buộc phải đúng)
 
-1. **Concurrent loads** — Two simultaneous requests for the same
-   uncached project would both call `MSBuildWorkspace.Create()` and
-   `OpenProjectAsync` — slow and memory-heavy. We use
-   `ConcurrentDictionary<string, Lazy<Task<ProjectCacheEntry>>>` so the
-   first request triggers the load and the second waits on the same task.
+1. **Concurrent loads** — Hai request đồng thời cho cùng project chưa
+   cache sẽ cùng gọi `MSBuildWorkspace.Create()` và `OpenProjectAsync` —
+   chậm và tốn RAM. Dùng
+   `ConcurrentDictionary<string, Lazy<Task<ProjectCacheEntry>>>` để
+   request đầu tiên trigger load và request thứ hai chờ cùng task đó.
 
-2. **Stale text** — After a file changes on disk, the cached
-   `Compilation` still reflects old text. `AnalyzeFileAsync` reads the
-   current text from disk and applies it via
-   `workspace.TryApplyChanges(updatedSolution)` before re-extracting,
-   so semantic relations always reflect the file's current state.
+2. **Stale text** — Sau khi file thay đổi trên disk, `Compilation` cache
+   vẫn giữ text cũ. `AnalyzeFileAsync` đọc text hiện tại từ disk và apply
+   qua `workspace.TryApplyChanges(updatedSolution)` trước khi extract,
+   để semantic relations luôn phản ánh state hiện tại của file.
 
-### project_path discovery
+### Discovery `project_path`
 
-Files don't carry their `.csproj` in the path. KB owns this resolution:
-`CsprojResolver` walks up from each `.cs` file to the deepest owning
-`.csproj`. n8n never sends `project_path` in webhooks unless it
-explicitly wants to override.
+File không tự mang `.csproj` của nó trong path. KB tự lo: `CsprojResolver`
+walk-up từ mỗi file `.cs` về `.csproj` chủ sở hữu sâu nhất. n8n không bao
+giờ phải gửi `project_path` trong webhook trừ khi muốn override.
 
 ### Internal namespace allowlist
 
-By default the analyzer drops calls into BCL / public NuGet (the symbol
-location is `IsInMetadata`). For internal NuGet packages the
-organisation publishes (whose source still lives outside the repo),
-set `INTERNAL_NS_PREFIXES=MyOrg.Internal,MyOrg.Shared` and those calls
-become CALLS edges anyway.
+Mặc định analyzer drop call vào BCL / public NuGet (location của symbol
+là `IsInMetadata`). Với internal NuGet package mà tổ chức tự publish (mã
+nguồn nằm ngoài repo), set
+`INTERNAL_NS_PREFIXES=MyOrg.Internal,MyOrg.Shared` thì các call này vẫn
+trở thành CALLS edge.
 
 ---
 
-## Synthetic Vietnamese descriptions
+## Synthetic description tiếng Việt
 
-### Why
+### Tại sao
 
-Tickets are noisy and only sometimes Vietnamese. To bridge a Vietnamese
-query like `"kiểm tra hạn mức tín dụng"` to an English-named function
-like `validateConstraints`, we generate a 1–2 sentence Vietnamese
-business description per symbol and embed it into a sibling
-`code_*_desc` collection.
+Tickets noisy và đôi khi mới có tiếng Việt. Để bridge một query tiếng
+Việt như `"kiểm tra hạn mức tín dụng"` về function tên tiếng Anh như
+`validateConstraints`, ta sinh 1–2 câu mô tả nghiệp vụ tiếng Việt cho
+mỗi symbol và embed vào collection `code_*_desc` song song.
 
 ### Cost & throughput
 
-For ~50k symbols (a 60/40 C#/TS codebase):
+Cho ~50k symbols (codebase 60/40 C#/TS):
 
-| Backend | Throughput | Time | Notes |
+| Backend | Throughput | Time | Ghi chú |
 |---|---|---|---|
-| Haiku 4.5 (API, 5 concurrent) | ~10–15 req/s | ~1 hour | a few tens of USD |
-| Qwen2.5-7B local (1 GPU) | ~20 req/s | ~40 min | free if you have the GPU |
-| Qwen2.5-7B CPU | ~1 req/s | ~14 hours | bottleneck — don't use for initial |
+| Haiku 4.5 (API, 5 concurrent) | ~10–15 req/s | ~1 giờ | vài chục USD |
+| Qwen2.5-7B local (1 GPU) | ~20 req/s | ~40 phút | free nếu đã có GPU |
+| Qwen2.5-7B CPU | ~1 req/s | ~14 giờ | bottleneck — không nên dùng cho initial |
 
 ### Async pipeline
 
@@ -472,16 +461,16 @@ index_file ──► Qdrant (code_ts | code_cs)
 
 desc_worker ──► claim batch
               ─► generate_description(entity, llm)
-              ─► Qdrant (code_*_desc)  with linked_chunk_id → code chunk
+              ─► Qdrant (code_*_desc)  với linked_chunk_id → code chunk
               ─► Neo4j set synthetic_description_vi
-              ─► flip code chunk's description_status=ready
-              ─► up to 3 attempts; failed jobs marked, not retried
+              ─► flip description_status=ready trên code chunk
+              ─► tối đa 3 lần retry; failed jobs được mark, không retry nữa
 ```
 
-`/index/file` returns in under a second; description generation never
-blocks indexing. If a description fails permanently, the code chunk
-stays searchable in `code_*` — only `code_*_desc` lacks it. `/stats`
-reports the queue counts so coverage gaps are visible.
+`/index/file` trả về dưới 1 giây; description generation không bao giờ
+block indexing. Nếu description fail vĩnh viễn, code chunk vẫn search
+được trong `code_*` — chỉ `code_*_desc` thiếu entry. `/stats` báo cáo
+queue counts để gap coverage hiện rõ.
 
 ### Prompt
 
@@ -496,7 +485,7 @@ Tên: {symbol_name}
 Loại: {symbol_type}
 Signature: {signature}
 Docstring: {docstring}
-Code: {first 500 chars}
+Code: {500 ký tự đầu}
 ```
 
 ---
@@ -505,23 +494,23 @@ Code: {first 500 chars}
 
 ### Detector
 
-`POST /index/changes` runs `git diff --name-status -M` between two
-commits and produces a `ChangeSet` with four buckets: modified, added,
-deleted, renamed. Extension filter keeps non-source out of the pipeline.
+`POST /index/changes` chạy `git diff --name-status -M` giữa hai commit
+và sinh ra `ChangeSet` với 4 bucket: modified, added, deleted, renamed.
+Filter extension giữ non-source ngoài pipeline.
 
-### Handler — idempotent flows
+### Handler — flow idempotent
 
-| Event | Handling |
+| Sự kiện | Xử lý |
 |---|---|
-| MODIFIED | Capture old symbol names → re-index → diff old vs new names → ripgrep relink referencers |
-| ADDED | Re-index → relink referencers (resolves placeholder edges that pointed at the not-yet-indexed symbol) |
-| DELETED | Capture old names → DETACH DELETE from Neo4j + delete from every Qdrant collection → mark `status=deleted` in tracker → relink old referencers |
-| RENAMED | Treat as DELETE old + ADD new (correctness over cleverness; works even when content also changed) |
+| MODIFIED | Capture symbol name cũ → re-index → diff cũ vs mới → ripgrep relink referencer |
+| ADDED | Re-index → relink referencer (resolve placeholder edge đang trỏ vào symbol chưa indexed) |
+| DELETED | Capture name cũ → DETACH DELETE Neo4j + delete khỏi mọi Qdrant collection → mark `status=deleted` trong tracker → relink referencer cũ |
+| RENAMED | Treat như DELETE cũ + ADD mới (correctness over cleverness; vẫn đúng cả khi content cũng thay đổi) |
 
-The handler captures the **pre-change** symbol set from Neo4j
-(`names_for_file`) before re-indexing, so it can compute the symmetric
-difference of names and only relink files that actually reference an
-appeared / disappeared name. Stable names trigger no relink.
+Handler capture symbol set **trước** khi re-index từ Neo4j
+(`names_for_file`), để có thể tính symmetric diff của name và chỉ relink
+file thực sự reference đến name xuất hiện / biến mất. Name ổn định không
+trigger relink.
 
 ### Cross-file relink (ripgrep)
 
@@ -533,13 +522,13 @@ def find_referencers(symbol_names: set[str], repo_path: str) -> set[str]:
     ...
 ```
 
-Word-boundary alternation pattern across all symbol names in one
-ripgrep call. Built-in ripgrep types `ts`/`js`/`cs` already cover
-`.tsx`/`.jsx`/`.cjs`/`.mjs`/`.cts`/`.mts`. Single-pass — the relinker
-re-indexes referencers but does not trigger another relink, so the
-pass terminates.
+Pattern alternation word-boundary qua tất cả symbol name trong một lần
+gọi ripgrep. Type built-in `ts`/`js`/`cs` của ripgrep đã cover
+`.tsx`/`.jsx`/`.cjs`/`.mjs`/`.cts`/`.mts`. Single-pass — relinker
+re-index referencer nhưng không trigger relink lần nữa, nên pass kết
+thúc.
 
-### Idempotent re-index (replaces 2-phase commit)
+### Idempotent re-index (thay cho 2-phase commit)
 
 ```python
 async def reindex_file_idempotent(file_path: str):
@@ -547,11 +536,11 @@ async def reindex_file_idempotent(file_path: str):
     try:
         entities, relations = parse_file(file_path)
 
-        # Drop old state by file_path — no need to remember IDs
+        # Drop state cũ theo file_path — không cần nhớ ID cũ
         neo4j_store.delete_by_file(file_path)
         qdrant_store.delete_by_file(file_path)
 
-        # Insert new state
+        # Insert state mới
         neo4j_ids = neo4j_store.insert(entities, relations)
         chunk_ids = qdrant_store.upsert_batch(entities)
 
@@ -562,15 +551,15 @@ async def reindex_file_idempotent(file_path: str):
         file_index.update(file_path, status="failed")
 ```
 
-Re-running the same change yields the same state. `DETACH DELETE` can't
-be rolled back, so the design avoids a 2-phase commit entirely — the
-repair job below catches anything that gets out of sync.
+Re-run cùng change yields cùng state. `DETACH DELETE` không rollback
+được, nên design tránh hẳn 2-phase commit — repair job bên dưới catch
+mọi thứ lệch.
 
-### Co-change graph from git history
+### Co-change graph từ git history
 
-Module-level edges, written in batch. A per-commit `max_files=30`
-threshold drops mass-format / mass-rename commits that would otherwise
-spam co-occurrence counts.
+Edge module-level, viết theo batch. Threshold `max_files=30` per-commit
+loại bỏ commit mass-format / mass-rename — những commit này nếu giữ lại
+sẽ làm spam co-occurrence count.
 
 ```bash
 python -m scripts.build_co_change --path /path/to/repo --min-count 3
@@ -583,21 +572,20 @@ python -m scripts.build_co_change --path /path/to/repo --min-count 3
 ```text
 POST /search
   └─► hybrid_search        (per collection: dense + BM25 + RRF)
-      └─► merge_collection_hits  (RRF across collections; desc → code dedup)
+      └─► merge_collection_hits  (RRF cross-collection; desc → code dedup)
           └─► reranker     (cross-encoder ms-marco-MiniLM-L-6-v2, optional)
               └─► graph_expand
-                  ├─ callers (1-2 hops, product-of-confidence)
+                  ├─ callers (1-2 hop, product-of-confidence)
                   ├─ callees
                   ├─ co_changed  (Module-level)
                   ├─ recent_commits (TOUCHED_BY)
                   └─ related_issues (REFERENCES, source_reliability=low)
-                      └─► context_packer  (tight JSON per plan §9)
+                      └─► context_packer  (JSON gọn theo plan §9)
 ```
 
-Description hits get rewritten so their `chunk_id` is the linked code
-chunk's id, dedup'ing back to a single result row whether the match
-came via code or via Vietnamese description (`matched_via` field
-indicates which).
+Description hits được rewrite để `chunk_id` thành id của linked code
+chunk, dedup về một result row duy nhất bất kể match qua code hay qua
+description tiếng Việt (field `matched_via` chỉ rõ).
 
 ### Response shape
 
@@ -647,40 +635,41 @@ indicates which).
 
 ### Langfuse tracing
 
-When `LANGFUSE_HOST` + `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY` are
-all set, every `/search` call writes a trace with input (query, top_k,
-collections, filters) and output (result_count). When any are unset the
-trace becomes a stub — call sites use the same context manager either way.
+Khi `LANGFUSE_HOST` + `LANGFUSE_SECRET_KEY` + `LANGFUSE_PUBLIC_KEY`
+đều được set, mỗi `/search` ghi trace với input (query, top_k,
+collections, filters) và output (result_count). Khi thiếu bất kỳ biến
+nào trace trở thành stub — call site dùng cùng context manager trong
+cả hai path.
 
 ---
 
-## Repair and maintenance
+## Repair và maintenance
 
-The repair pass is bounded — it never scans every file. Run it on a
-15-minute cron:
+Repair pass có giới hạn — không bao giờ scan toàn bộ file. Chạy cron
+mỗi 15 phút:
 
 ```python
 def repair():
-    # 1. Retry failed (capped at failed_limit)
+    # 1. Retry các file failed (cap ở failed_limit)
     for f in tracker.query_failed(limit=100):
         reindex_file_idempotent(f.file_path)
 
-    # 2. Drain dirty queue (set by webhooks / failed ops, capped)
+    # 2. Drain dirty queue (set bởi webhook / failed ops, có cap)
     for f in tracker.query_dirty(limit=200):
         actual = qdrant_store.count_by_file(f.file_path)
         if actual != len(f.chunk_ids):
             reindex_file_idempotent(f.file_path)
 
-    # 3. Sample 1% of indexed records — catch silent drift
+    # 3. Sample 1% record indexed — bắt drift im lặng
     sample = tracker.random_sample_indexed(fraction=0.01)
     for f in sample:
         if qdrant_store.count_by_file(f.file_path) != len(f.chunk_ids):
-            tracker.mark_dirty(f.file_path)  # next pass handles it
+            tracker.mark_dirty(f.file_path)  # pass tới sẽ xử lý
 ```
 
-`/stats/consistency` does the bigger sweep when you want to look at
-divergence directly. The 15-minute loop trusts the dirty flag and the
-1% sample to find drift over time.
+`/stats/consistency` chạy sweep lớn hơn khi muốn xem drift trực tiếp.
+Loop 15 phút tin vào dirty flag và 1% sample để dần phát hiện drift
+theo thời gian.
 
 ---
 
@@ -691,37 +680,37 @@ divergence directly. The 15-minute loop trusts the dirty flag and the
 ```http
 POST /index/repo
 Body: {"path": "/repos/my-project", "repo": "my-project"}
-→ Full background index of a repo (TS + C# auto-detected)
+→ Full background index của một repo (TS + C# auto-detect)
 
 POST /index/changes
 Body: {"repo": "...", "repo_path": "/repos/my-project",
        "since_commit": "abc123", "current_commit": "HEAD"}
-→ Run git diff between the two commits, apply M/A/D/R + cross-file relink
+→ Run git diff giữa 2 commit, apply M/A/D/R + cross-file relink
 
 POST /index/file
 Body: {"file_path": "src/auth/validator.ts", "repo": "my-project"}
       {"file_path": "src/Auth/Validator.cs", "repo": "my-project",
-       "repo_root": "/repos/my-project"}    # required for .cs auto-resolve
-      # `project_path` is an optional override for either
-→ Idempotent re-index of one file
+       "repo_root": "/repos/my-project"}    # bắt buộc với .cs auto-resolve
+      # `project_path` là override optional cho cả hai
+→ Idempotent re-index một file
 
 POST /index/rename
 Body: {"old_path": "src/old.ts", "new_path": "src/new.ts", "repo": "..."}
 
 POST /index/delete
 Body: {"file_path": "src/old.ts", "repo": "..."}
-# POST instead of DELETE-with-body — many proxies / clients strip
-# DELETE bodies (RFC 7231 leaves the semantics undefined).
+# POST thay vì DELETE-with-body — nhiều proxy / client strip body của
+# DELETE (RFC 7231 không định nghĩa semantics).
 
 POST /index/docs
 Body: {"path": "/docs/", "repo": "..."}
-→ Background index of all Markdown / PDF / DOCX under a directory
+→ Background index toàn bộ Markdown / PDF / DOCX trong directory
 
 POST /index/doc/file
 Body: {"file_path": "/docs/architecture.md", "repo": "..."}
 ```
 
-### Search (n8n calls these)
+### Search (n8n gọi các endpoint này)
 
 ```http
 POST /search
@@ -739,7 +728,7 @@ Body: {
 
 POST /search/symbol
 Body: {"qualified_name": "src/auth/validator.ts::validateUser"}
-→ Exact lookup (Neo4j) — useful when n8n already has a name
+→ Lookup chính xác (Neo4j) — dùng khi n8n đã có name
 
 POST /search/callers
 Body: {"chunk_id": "...", "max_hops": 2}
@@ -754,9 +743,9 @@ Body: {"file_path": "src/auth/validator.ts", "min_count": 3, "limit": 8}
 ### Maintenance
 
 ```http
-GET  /health                  -- Neo4j + Qdrant + Roslyn liveness
-GET  /stats                   -- per-collection counts + desc-job summary
-GET  /stats/consistency       -- list files where Qdrant ↔ tracker drift
+GET  /health                  -- liveness Neo4j + Qdrant + Roslyn
+GET  /stats                   -- count per-collection + tổng kết desc-job
+GET  /stats/consistency       -- list file mà Qdrant ↔ tracker drift
 POST /repair                  -- retry failed, drain dirty, sample sweep
 ```
 
@@ -764,40 +753,40 @@ POST /repair                  -- retry failed, drain dirty, sample sweep
 
 ## Eval methodology
 
-### Golden set from commits (not tickets)
+### Golden set từ commits (không dùng tickets)
 
-Tickets are noisy. Commits with messages like `fix:` / `bug:` and clear
-PR descriptions are stronger ground truth — the diff tells us exactly
-which files / functions the fix touched.
+Tickets noisy. Commit có message như `fix:` / `bug:` và PR description
+rõ ràng là ground truth mạnh hơn — diff cho ta biết chính xác file /
+function nào fix đã chạm.
 
 ```text
-Pick 30–50 commits with clear "fix:" / "bug:" messages.
-For each commit:
-  - Ground truth: files / functions changed (from git diff).
-  - Query:        commit message as input.
-  - Expected:     /search returns those files / functions.
+Chọn 30–50 commit với message "fix:" / "bug:" rõ ràng.
+Với mỗi commit:
+  - Ground truth: file / function thay đổi (từ git diff).
+  - Query:        commit message làm input.
+  - Expected:     /search trả về đúng những file / function đó.
 ```
 
 ### Metrics
 
-| Metric | Target |
+| Metric | Mục tiêu |
 |---|---|
 | Precision@5 | ≥ 0.75 |
 | MRR | ≥ 0.70 |
-| Hybrid vs dense-only (keyword queries) | ≥ +15% |
-| Query latency p95 | ≤ 2 seconds |
-| Indexing throughput | ≥ 100 files/min (CPU) |
-| Incremental re-index 1 file | ≤ 15 seconds |
-| `chunk_id` consistency Neo4j ↔ Qdrant | 100% |
+| Hybrid vs dense-only (query keyword) | ≥ +15% |
+| Query latency p95 | ≤ 2 giây |
+| Indexing throughput | ≥ 100 file/phút (CPU) |
+| Incremental re-index 1 file | ≤ 15 giây |
+| Consistency `chunk_id` Neo4j ↔ Qdrant | 100% |
 
 ### Failure mode catalog
 
 ```text
-For each /search miss:
+Mỗi case /search miss:
   failure_type: retrieval_miss | wrong_file | graph_wrong | bm25_miss | desc_miss
-  notes: specific reason
+  notes: lý do cụ thể
 
-End-of-week review → top 3 failure modes inform next week's fixes.
+Review cuối tuần → top 3 failure mode quyết định fix gì tuần sau.
 ```
 
 ---
@@ -807,56 +796,56 @@ End-of-week review → top 3 failure modes inform next week's fixes.
 ```text
 kb_indexer/                 Python service (port 8000)
   parsers/
-    ts_parser.py            tree-sitter for TS/TSX/JS
+    ts_parser.py            tree-sitter cho TS/TSX/JS
     csharp_parser.py        HTTP bridge → roslyn-service
     csproj_resolver.py      .cs file → owning .csproj (deepest wins)
-    doc_parser.py           Markdown native; Docling for PDF/DOCX (optional)
+    doc_parser.py           Markdown native; Docling cho PDF/DOCX (optional)
   extractors/
-    entity_extractor.py     dispatch by extension
-    relation_extractor.py   intra-file resolution; preserves Roslyn to_qn
+    entity_extractor.py     dispatch theo extension
+    relation_extractor.py   resolve intra-file; preserve to_qn từ Roslyn
     commit_extractor.py     git log → Commit nodes + TOUCHED_BY edges
-    co_change_builder.py    module-level CO_CHANGED edges (mass-format filtered)
+    co_change_builder.py    CO_CHANGED edge module-level (loại mass-format)
   change/
     detector.py             git diff → ChangeSet (M/A/D/R)
-    handler.py              idempotent apply_changes + cross-file relink
-    relinker.py             ripgrep finds referencer files for re-index
+    handler.py              apply_changes idempotent + cross-file relink
+    relinker.py             ripgrep tìm referencer file để re-index
   query/
-    hybrid_search.py        dense + BM25 + RRF across multiple collections
-    cross_collection.py     RRF merge code + description; dedupe via linked_chunk_id
+    hybrid_search.py        dense + BM25 + RRF cross multi-collection
+    cross_collection.py     RRF merge code + description; dedup linked_chunk_id
     graph_expand.py         callers, callees, co_changed, recent_commits, issues
-    reranker.py             ms-marco-MiniLM-L-6-v2 cross-encoder (lazy-loaded)
-    context_packer.py       formats /search response per the schema above
-    search_pipeline.py      orchestrates retrieval → rerank → graph → pack
+    reranker.py             cross-encoder ms-marco-MiniLM-L-6-v2 (lazy-load)
+    context_packer.py       format response /search theo schema bên trên
+    search_pipeline.py      orchestrate retrieval → rerank → graph → pack
     filters.py              dict → Qdrant Filter
   stores/
-    neo4j_store.py          unique constraints on qualified_name, idempotent MERGE
+    neo4j_store.py          unique constraint qualified_name, MERGE idempotent
     qdrant_store.py         dense + BM25, RRF fusion, 6 collections
   state/
     models.py               file_index, doc_index, sync_log, desc_jobs
-    tracker.py              SQLite WAL session, dirty queue, sampling
+    tracker.py              session SQLite WAL, dirty queue, sampling
   embedder.py               Ollama (incremental) + voyage-code-2 (initial)
   bm25_encoder.py           fastembed Qdrant/bm25
-  llm.py                    Anthropic Haiku / Ollama backends for descriptions
-  description_generator.py  Vietnamese prompt → 1-2 câu mô tả nghiệp vụ
-  description_worker.py     drains the desc_jobs queue
-  indexing.py               idempotent index_file / index_doc pipelines
-  repair.py                 failed retry + dirty drain + sample sweep
-  tracing.py                Langfuse trace_search context manager (no-op if unset)
+  llm.py                    backend Anthropic Haiku / Ollama cho description
+  description_generator.py  prompt tiếng Việt → 1-2 câu mô tả nghiệp vụ
+  description_worker.py     drain queue desc_jobs
+  indexing.py               pipeline idempotent index_file / index_doc
+  repair.py                 retry failed + drain dirty + sample sweep
+  tracing.py                Langfuse trace_search context manager (no-op nếu unset)
   api/                      FastAPI routers (health, index, maintenance, search)
 
 roslyn-service/             .NET 8 minimal API (port 5000)
-  Program.cs                snake_case JSON, MSBuildLocator.RegisterDefaults
-  CSharpAnalyzer.cs         per-project MSBuildWorkspace cache, TryApplyChanges
-                            on incremental file analysis, internal-NS allowlist
+  Program.cs                JSON snake_case, MSBuildLocator.RegisterDefaults
+  CSharpAnalyzer.cs         cache MSBuildWorkspace per-project, TryApplyChanges
+                            khi analyze incremental file, allowlist internal NS
   Models/                   EntityDto, RelationDto, AnalysisResult
 
 scripts/                    setup + initial index utilities
-  setup_neo4j.py            constraints + SQLite schema
-  setup_collections.py      idempotent Qdrant collections
-  initial_index.py          full repo index (auto-detects TS + C#)
-  desc_worker.py            long-running queue drainer (--once for batch)
-  build_co_change.py        write CO_CHANGED edges from git history
-  repair.py                 cron-friendly one-shot repair pass
+  setup_neo4j.py            constraints + schema SQLite
+  setup_collections.py      Qdrant collections idempotent
+  initial_index.py          full repo index (auto-detect TS + C#)
+  desc_worker.py            queue drainer chạy lâu (--once cho batch)
+  build_co_change.py        ghi CO_CHANGED edge từ lịch sử git
+  repair.py                 repair pass cron-friendly chạy một lần
 
 tests/                      67 unit tests (pytest)
 ```
@@ -870,50 +859,50 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/pytest tests/
 ```
 
-67 unit tests covering:
+67 unit tests cover:
 
-- `ts_parser` — TS/JS entity extraction, qualified names, CALLS / IMPORTS / EXTENDS edges
-- `csharp_parser_bridge` — Roslyn HTTP bridge (mocked via `httpx.MockTransport`)
+- `ts_parser` — extract entity TS/JS, qualified name, edge CALLS / IMPORTS / EXTENDS
+- `csharp_parser_bridge` — Roslyn HTTP bridge (mock qua `httpx.MockTransport`)
 - `csproj_resolver` — file → owning `.csproj` (deepest wins) + caching
-- `entity_extractor_dispatch` — extension routing
-- `relation_extractor` — same-file resolution, preserves Roslyn-resolved `to_qn`
+- `entity_extractor_dispatch` — routing theo extension
+- `relation_extractor` — same-file resolution, preserve `to_qn` từ Roslyn
 - `state_tracker` — SQLite WAL, dirty flag, sync log
-- `doc_parser` — Markdown heading split, windowed chunking
-- `description_generator` — prompt construction + output cleanup
-- `description_worker` — claim → generate → write → mark done; retry on failure
-- `cross_collection` — RRF fusion, dedupe via `linked_chunk_id`, multi-collection merge
-- `change_detector` — `git diff --name-status -M` → ChangeSet (M/A/D/R), extension filter
-- `change_handler` — idempotent apply + relink, no double-indexing, failure isolation
-- `relinker` — ripgrep word-boundary referencer search across `ts/js/cs`
-- `commit_extractor` — `git log` → Commits with touched files
-- `co_change_builder` — module-level pairs ≥ min_count, drops mass-format commits
-- `filters` — flat dict → Qdrant `Filter` (scalar, list, None handling)
-- `context_packer` — drops None fields, attaches `graph_context` per `chunk_id`
-- `search_pipeline` — packed response shape, description→code dedup, filter pass-through, rerank fallback
+- `doc_parser` — split heading Markdown, chunk theo window
+- `description_generator` — build prompt + làm sạch output
+- `description_worker` — claim → generate → write → mark done; retry khi fail
+- `cross_collection` — RRF fusion, dedup qua `linked_chunk_id`, multi-collection merge
+- `change_detector` — `git diff --name-status -M` → ChangeSet (M/A/D/R), filter extension
+- `change_handler` — apply idempotent + relink, không double-index, cô lập failure
+- `relinker` — ripgrep word-boundary tìm referencer cross `ts/js/cs`
+- `commit_extractor` — `git log` → Commit với file đã chạm
+- `co_change_builder` — pair module-level ≥ min_count, loại commit mass-format
+- `filters` — dict phẳng → Qdrant `Filter` (scalar, list, None handling)
+- `context_packer` — drop field None, attach `graph_context` theo `chunk_id`
+- `search_pipeline` — shape response packed, dedup description→code, filter pass-through, rerank fallback
 
-The `relinker` and git-based tests need `rg` and `git` on PATH; they
-auto-skip when those aren't available.
+Test `relinker` và git-based cần `rg` và `git` trên PATH; auto-skip nếu
+thiếu.
 
 ---
 
 ## Timeline
 
-11 weeks total. Week 7–8 split is deliberate — eval week 7 typically
-exposes a chunking-strategy or description-prompt issue, and fixing
-those requires re-indexing part of the codebase, which doesn't fit in a
-single week alongside running eval.
+Tổng cộng 11 tuần. Tách tuần 7–8 là cố ý — eval tuần 7 thường lộ ra vấn
+đề chunking strategy hoặc description prompt, fix các thứ này cần
+re-index một phần codebase, không nhét được trong cùng một tuần với
+chạy eval.
 
-| Week | Focus | Done criterion |
+| Tuần | Focus | Done criterion |
 |---|---|---|
-| 1–2 | Foundation TS + dual stores | graph has unique `qualified_name`, CALLS edges have confidence, `chunk_id` matches both stores |
-| 3 | Roslyn service + C# indexing | `MyProject.Auth::AuthService.Login`-style names; CALLS edges confidence=1.0 (semantic) |
-| 4 | Vietnamese descriptions + docs | "kiểm tra hạn mức tín dụng" → returns the English-named function |
-| 5 | Change management | Rename class → `qualified_name` updated in both stores in <30s; no orphan nodes |
-| 6 | Search & context packing | n8n receives caller chain + co_changed + related_issues (flagged low) in one call |
-| 7 | Eval — build & baseline | Golden set + eval harness running, baseline P@5 / MRR recorded |
-| 8 | Eval — iterate | P@5 ≥ 0.75 on commit-based golden set |
-| 9 | Hardening | p95 ≤ 2s, throughput ≥ 100 files/min, repair stress-tested |
-| 10–11 | n8n integration polish | n8n workflow Git webhook → `/index/changes`, runbook for re-index / repair |
+| 1–2 | Foundation TS + dual stores | graph có `qualified_name` unique, CALLS edge có confidence, `chunk_id` khớp 2 stores |
+| 3 | Roslyn service + C# indexing | name dạng `MyProject.Auth::AuthService.Login`; CALLS edge confidence=1.0 (semantic) |
+| 4 | Description tiếng Việt + docs | "kiểm tra hạn mức tín dụng" → trả về function tên tiếng Anh |
+| 5 | Change management | Rename class → `qualified_name` update đúng cả 2 stores < 30s; không có orphan node |
+| 6 | Search & context packing | n8n nhận caller chain + co_changed + related_issues (flag low) trong một call |
+| 7 | Eval — build & baseline | Golden set + eval harness chạy được, baseline P@5 / MRR đã ghi |
+| 8 | Eval — iterate | P@5 ≥ 0.75 trên golden set commit-based |
+| 9 | Hardening | p95 ≤ 2s, throughput ≥ 100 file/phút, repair stress-tested |
+| 10–11 | Polish n8n integration | n8n workflow Git webhook → `/index/changes`, runbook re-index / repair |
 
 ---
 
@@ -922,34 +911,34 @@ single week alongside running eval.
 | Feature | v1 | v2 |
 |---|---|---|
 | TypeScript / JavaScript | ✅ | |
-| C# with Roslyn semantic analysis | ✅ | |
-| Docs + Issues indexing | ✅ | |
-| Synthetic Vietnamese descriptions | ✅ | |
+| C# với Roslyn semantic analysis | ✅ | |
+| Index Docs + Issues | ✅ | |
+| Synthetic description tiếng Việt | ✅ | |
 | BM25 hybrid search | ✅ | |
-| CO_CHANGED edges | ✅ | |
-| Idempotent change management | ✅ | |
+| CO_CHANGED edge | ✅ | |
+| Change management idempotent | ✅ | |
 | AnythingLLM UI | | ✅ |
 | Multi-version doc tracking | | ✅ |
 | Dynamic dispatch resolution (C#) | | ✅ |
 
 ---
 
-## Risks and mitigations
+## Rủi ro và phương án
 
-| Risk | Likelihood | Mitigation |
+| Rủi ro | Khả năng | Phương án |
 |---|---|---|
-| Neo4j GPL-3.0 incompatibility | Low | Memgraph (BSL) or FalkorDB (MIT) — same Cypher |
-| Ollama too slow for initial index | High (CPU) | voyage-code-2 for initial; Ollama for incremental only |
-| Synthetic descriptions low quality | Medium | Few-shot prompt examples; eval `desc_miss` failure mode separately |
-| ripgrep misses dynamic references | Medium | Known limitation, surfaced in response metadata |
-| SQLite contention under webhook bursts | Low | WAL mode + dirty-flag queue; SQLAlchemy session-per-op |
-| `chunk_id` divergence Neo4j ↔ Qdrant | Medium | Repair job + `/stats/consistency` catch drift |
-| Roslyn service RAM pressure | High | 2 GB container limit, LRU per-project cache, max 2 concurrent |
-| MSBuildWorkspace can't load `.csproj` | Medium | Need `dotnet sdk` + restored NuGet before analyze |
-| Partial classes split across files | Medium | Roslyn merges via semantic model; namespace-based qualified_name handles it |
-| Roslyn cold start (15–30s) | High | Service stays running; `/health` checks `msbuild_loaded` |
-| Roslyn cache stale after edit | High | `AnalyzeFileAsync` reads disk + `TryApplyChanges`; `/cache/invalidate` for big re-indexes |
-| Concurrent requests racing to load workspace | Medium | `ConcurrentDictionary<Lazy<Task<…>>>` collapses to single load |
-| Description backlog stalls for days | Medium | Async queue + `description_status`; `/stats` shows coverage; code search keeps working |
-| n8n forced to know `.csproj` per file | Medium | KB resolves via `CsprojResolver`; override via repo-config if needed |
-| Mass-format commits poison CO_CHANGED | Medium | Drop commits touching >30 source files |
+| GPL-3.0 của Neo4j không phù hợp | Thấp | Memgraph (BSL) hoặc FalkorDB (MIT) — cùng Cypher |
+| Ollama quá chậm cho initial index | Cao (CPU) | voyage-code-2 cho initial; Ollama chỉ cho incremental |
+| Description chất lượng kém | Trung bình | Few-shot example trong prompt; eval `desc_miss` riêng |
+| ripgrep miss dynamic reference | Trung bình | Known limitation, surface trong response metadata |
+| SQLite contention khi nhiều webhook | Thấp | WAL mode + dirty-flag queue; SQLAlchemy session-per-op |
+| `chunk_id` lệch Neo4j ↔ Qdrant | Trung bình | Repair job + `/stats/consistency` bắt drift |
+| Roslyn service tốn RAM | Cao | Limit 2GB, cache LRU per-project, max 2 concurrent |
+| MSBuildWorkspace không load được `.csproj` | Trung bình | Cần `dotnet sdk` + restore NuGet trước khi analyze |
+| Partial class C# split nhiều file | Trung bình | Roslyn merge qua semantic model; qualified_name namespace-based xử lý đúng |
+| Roslyn cold start (15–30s) | Cao | Service luôn running; `/health` check `msbuild_loaded` |
+| Cache Roslyn stale sau khi sửa file | Cao | `AnalyzeFileAsync` đọc disk + `TryApplyChanges`; `/cache/invalidate` cho re-index lớn |
+| Concurrent request đua nhau load workspace | Trung bình | `ConcurrentDictionary<Lazy<Task<…>>>` collapse về single load |
+| Description backlog tồn đọng nhiều ngày | Trung bình | Async queue + `description_status`; `/stats` báo coverage; code search vẫn hoạt động |
+| n8n bị ép phải biết `.csproj` của từng `.cs` | Trung bình | KB resolve qua `CsprojResolver`; override qua repo-config nếu cần |
+| Mass-format commit phá CO_CHANGED | Trung bình | Loại commit chạm > 30 source file |
