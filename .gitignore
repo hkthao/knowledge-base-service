@@ -9,7 +9,6 @@ venv/
 data/
 # repos/* (not repos/) — dùng `*` để git vẫn duyệt vào subdir để
 # negative pattern dưới đây hoạt động.
-repos/*
 !repos/sample-ts/
 !repos/sample-cs/
 !repos/README.md
