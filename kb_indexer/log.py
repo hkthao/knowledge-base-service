@@ -7,9 +7,11 @@ from .settings import settings
 
 
 def configure_logging() -> None:
+    # Log ra stderr — stdout giữ sạch cho MCP stdio JSON-RPC. FastAPI / CLI
+    # vẫn nhận log như bình thường vì terminal hiển thị cả stderr.
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        stream=sys.stderr,
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
     )
     structlog.configure(
@@ -22,6 +24,8 @@ def configure_logging() -> None:
         wrapper_class=structlog.make_filtering_bound_logger(
             getattr(logging, settings.log_level.upper(), logging.INFO),
         ),
+        # PrintLogger mặc định ghi stdout — đẩy sang stderr để MCP stdio sạch
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
 

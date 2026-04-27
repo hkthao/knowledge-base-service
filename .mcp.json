@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "knowledge-base": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "kb_indexer.mcp_server"]
+    }
+  }
+}
