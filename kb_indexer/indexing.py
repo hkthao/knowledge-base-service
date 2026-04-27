@@ -9,10 +9,12 @@ from .embedder import DenseEmbedder
 from .extractors.entity_extractor import extract_from_file
 from .extractors.relation_extractor import resolve_intra_file
 from .log import get_logger
+from .parsers.csharp_parser import CSharpParser
+from .parsers.csproj_resolver import CsprojResolver
 from .parsers.ts_parser import Entity, ParseResult
 from .state import tracker
 from .stores import neo4j_store, qdrant_store
-from .stores.qdrant_store import CODE_TS
+from .stores.qdrant_store import code_collection_for
 
 log = get_logger(__name__)
 
@@ -36,6 +38,8 @@ def index_file(
     file_path: str,
     repo: str,
     embedder: DenseEmbedder,
+    project_path: str | None = None,
+    csharp_parser: CSharpParser | None = None,
     qc=None,
     drv=None,
 ) -> dict:
@@ -45,13 +49,19 @@ def index_file(
 
     op_id = tracker.record_intent(file_path, "MODIFIED", {"desired_state": "indexed"})
     try:
-        parsed = extract_from_file(file_path)
+        parsed = extract_from_file(
+            file_path,
+            project_path=project_path,
+            csharp_parser=csharp_parser,
+        )
         parsed.relations = resolve_intra_file(parsed)
         embeddable = _embeddable(parsed)
 
+        collection = code_collection_for(parsed.language)
+
         # Drop old state for this file
         neo4j_store.delete_by_file(drv, file_path)
-        qdrant_store.delete_by_file(qc, CODE_TS, file_path)
+        qdrant_store.delete_by_file(qc, collection, file_path)
 
         chunk_id_by_qn: dict[str, str] = {e.qualified_name: str(uuid4()) for e in embeddable}
         # Module entity also needs a chunk_id (for graph identity), even if not embedded
@@ -68,7 +78,7 @@ def index_file(
         )
 
         # Write Qdrant points (only embeddable entities)
-        chunk_ids = _write_chunks(qc, repo, embeddable, chunk_id_by_qn, embedder)
+        chunk_ids = _write_chunks(qc, collection, repo, embeddable, chunk_id_by_qn, embedder)
 
         tracker.upsert_file(
             file_path=file_path,
@@ -101,6 +111,7 @@ def index_file(
 
 def _write_chunks(
     qc,
+    collection: str,
     repo: str,
     entities: list[Entity],
     chunk_id_by_qn: dict[str, str],
@@ -141,7 +152,12 @@ def _write_chunks(
             },
         })
 
-    return qdrant_store.upsert_points(qc, CODE_TS, points)
+    return qdrant_store.upsert_points(qc, collection, points)
+
+
+_DEFAULT_TS_GLOBS = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx")
+_DEFAULT_CS_GLOBS = ("**/*.cs",)
+_SKIP_DIR_FRAGMENTS = ("/node_modules/", "/dist/", "/bin/", "/obj/", "/.git/")
 
 
 def index_repo(
@@ -149,7 +165,8 @@ def index_repo(
     repo: str,
     repo_path: str,
     embedder: DenseEmbedder,
-    glob_patterns: Iterable[str] = ("**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"),
+    glob_patterns: Iterable[str] = _DEFAULT_TS_GLOBS + _DEFAULT_CS_GLOBS,
+    csharp_parser: CSharpParser | None = None,
 ) -> dict:
     qc = qdrant_store.client()
     drv = neo4j_store.driver()
@@ -158,15 +175,48 @@ def index_repo(
     files: list[str] = []
     for pattern in glob_patterns:
         files.extend(str(p) for p in root.glob(pattern) if p.is_file())
-    # de-dup + skip node_modules / dist
-    files = sorted({f for f in files if "/node_modules/" not in f and "/dist/" not in f})
+    files = sorted({
+        f for f in files
+        if not any(frag in f for frag in _SKIP_DIR_FRAGMENTS)
+    })
 
-    log.info("indexing_repo", repo=repo, files=len(files))
+    cs_files = [f for f in files if f.endswith(".cs")]
+    other_files = [f for f in files if not f.endswith(".cs")]
+
+    csproj_resolver: CsprojResolver | None = None
+    parser = csharp_parser
+    if cs_files:
+        csproj_resolver = CsprojResolver(repo_path)
+        parser = parser or CSharpParser()
+
+    log.info(
+        "indexing_repo",
+        repo=repo, ts_files=len(other_files), cs_files=len(cs_files),
+    )
+
     indexed = 0
     failures: list[str] = []
-    for file_path in files:
+
+    for file_path in other_files:
         try:
             index_file(file_path=file_path, repo=repo, embedder=embedder, qc=qc, drv=drv)
+            indexed += 1
+        except Exception as exc:
+            failures.append(f"{file_path}: {exc}")
+
+    for file_path in cs_files:
+        try:
+            assert csproj_resolver is not None
+            project_path = csproj_resolver.resolve(file_path)
+            index_file(
+                file_path=file_path,
+                repo=repo,
+                embedder=embedder,
+                project_path=project_path,
+                csharp_parser=parser,
+                qc=qc,
+                drv=drv,
+            )
             indexed += 1
         except Exception as exc:
             failures.append(f"{file_path}: {exc}")

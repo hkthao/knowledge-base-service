@@ -38,6 +38,7 @@ services:
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-changeme-please}
       - QDRANT_URL=http://qdrant:6333
       - OLLAMA_URL=http://ollama:11434
+      - ROSLYN_URL=http://roslyn-service:5000
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - LANGFUSE_HOST=http://langfuse:3000
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
@@ -50,6 +51,23 @@ services:
       - neo4j
       - qdrant
       - ollama
+      - roslyn-service
+
+  roslyn-service:
+    build: ./roslyn-service
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount repos at the same path Python sees so file_path matches.
+      - ./repos:/repos
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DOTNET_RUNNING_IN_CONTAINER=true
+      - INTERNAL_NS_PREFIXES=${INTERNAL_NS_PREFIXES:-}
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
   langfuse:
     image: langfuse/langfuse:2

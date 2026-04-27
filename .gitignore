@@ -21,3 +21,5 @@ docs/
 .DS_Store
 .idea/
 .vscode/
+roslyn-service/bin/
+roslyn-service/obj/

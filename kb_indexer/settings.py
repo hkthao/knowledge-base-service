@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     voyage_code_model: str = "voyage-code-2"
 
+    roslyn_url: str = "http://localhost:5000"
+    # Comma-separated list of internal namespace prefixes whose calls we keep
+    # even when their symbol locations are in metadata (e.g. shared internal
+    # NuGet packages). Forwarded to roslyn-service via INTERNAL_NS_PREFIXES.
+    internal_ns_prefixes: str = ""
+
     state_db_path: str = "data/index_state.db"
 
     dense_dim: int = 768

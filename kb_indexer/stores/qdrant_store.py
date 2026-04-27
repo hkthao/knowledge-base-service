@@ -22,9 +22,19 @@ from ..settings import settings
 
 CODE_TS = "code_ts"
 CODE_TS_DESC = "code_ts_desc"
+CODE_CS = "code_cs"
+CODE_CS_DESC = "code_cs_desc"
 DOCS = "docs"
 ISSUES = "issues"
-ALL_COLLECTIONS = (CODE_TS, CODE_TS_DESC, DOCS, ISSUES)
+ALL_COLLECTIONS = (CODE_TS, CODE_TS_DESC, CODE_CS, CODE_CS_DESC, DOCS, ISSUES)
+
+
+def code_collection_for(language: str) -> str:
+    return CODE_CS if language == "csharp" else CODE_TS
+
+
+def desc_collection_for(language: str) -> str:
+    return CODE_CS_DESC if language == "csharp" else CODE_TS_DESC
 
 _KEYWORD_FIELDS = (
     "file_path", "repo", "symbol_type", "is_latest",

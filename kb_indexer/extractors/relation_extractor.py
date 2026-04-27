@@ -16,6 +16,11 @@ def resolve_intra_file(parsed: ParseResult) -> list[Relation]:
 
     resolved: list[Relation] = []
     for rel in parsed.relations:
+        # Already-resolved relations (e.g. semantic from Roslyn) keep their
+        # to_qn — don't let same-file name match overwrite a precise resolution.
+        if rel.to_qn is not None:
+            resolved.append(rel)
+            continue
         target = by_name.get(rel.to_name)
         if target is None:
             resolved.append(rel)

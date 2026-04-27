@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from neo4j.exceptions import ServiceUnavailable
 
+from ...parsers.csharp_parser import CSharpParser
 from ...stores import neo4j_store, qdrant_store
 
 router = APIRouter()
@@ -24,6 +25,8 @@ def health() -> dict:
         status["neo4j"] = "ok"
     except (ServiceUnavailable, Exception) as exc:
         status["neo4j"] = f"error: {exc}"
+
+    status["roslyn"] = "ok" if CSharpParser().health_check() else "unreachable"
 
     overall = "ok" if all(v == "ok" for v in status.values()) else "degraded"
     return {"status": overall, "deps": status}
