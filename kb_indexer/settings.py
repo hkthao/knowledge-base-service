@@ -12,13 +12,17 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
 
     ollama_url: str = "http://localhost:11434"
-    ollama_code_model: str = "nomic-embed-code"
+    # nomic-embed-code chưa có trên Ollama hub (chỉ trên HuggingFace).
+    # Dùng nomic-embed-text cho cả code lẫn text — chất lượng đủ cho domain
+    # và tránh phải build custom GGUF. Override qua OLLAMA_CODE_MODEL nếu
+    # đã pull một model code-specific (vd: bge-m3, mxbai-embed-large).
+    ollama_code_model: str = "nomic-embed-text"
     ollama_text_model: str = "nomic-embed-text"
 
     voyage_api_key: str = ""
     voyage_code_model: str = "voyage-code-2"
 
-    roslyn_url: str = "http://localhost:5000"
+    roslyn_url: str = "http://localhost:5050"
     # Comma-separated list of internal namespace prefixes whose calls we keep
     # even when their symbol locations are in metadata (e.g. shared internal
     # NuGet packages). Forwarded to roslyn-service via INTERNAL_NS_PREFIXES.

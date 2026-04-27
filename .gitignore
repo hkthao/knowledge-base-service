@@ -28,3 +28,5 @@ docs/
 .vscode/
 roslyn-service/bin/
 roslyn-service/obj/
+repos/sample-cs/bin/
+repos/sample-cs/obj/

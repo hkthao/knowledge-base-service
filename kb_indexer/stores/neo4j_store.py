@@ -81,6 +81,24 @@ def upsert_entity(tx, entity: Entity, chunk_id: str, repo: str) -> None:
         repo=repo,
     )
 
+    # If a label-less placeholder exists with the same qualified_name
+    # (created by some other file's relation pointing here before this
+    # entity was indexed), merge it INTO the labeled node so its incoming
+    # edges get redirected. Requires APOC.
+    tx.run(
+        """
+        MATCH (real {qualified_name: $qn}) WHERE size(labels(real)) > 0
+        MATCH (placeholder {qualified_name: $qn})
+            WHERE placeholder.placeholder = true AND id(placeholder) <> id(real)
+        WITH real, placeholder
+        CALL apoc.refactor.mergeNodes([real, placeholder],
+            {properties: 'discard', mergeRels: true})
+        YIELD node
+        RETURN node
+        """,
+        qn=entity.qualified_name,
+    )
+
     # DEFINES edge from Module → entity
     if entity.symbol_type != "module":
         tx.run(

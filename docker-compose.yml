@@ -56,10 +56,17 @@ services:
   roslyn-service:
     build: ./roslyn-service
     ports:
-      - "5000:5000"
+      # Host 5050 — port 5000 đụng macOS AirPlay Receiver. Trong network
+      # docker, container vẫn nói chuyện qua port 5000 (không đổi).
+      - "5050:5000"
     volumes:
-      # Mount repos at the same path Python sees so file_path matches.
+      # Hai mount cho cùng dữ liệu:
+      #  - /repos: dùng khi kb-indexer cũng chạy trong docker
+      #  - ${PWD}/repos: dùng khi kb-indexer chạy local — host abs path
+      #    của file phải resolve được trong container thì Roslyn mới
+      #    OpenProject + ReadAllText được.
       - ./repos:/repos
+      - ${PWD}/repos:${PWD}/repos
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - DOTNET_RUNNING_IN_CONTAINER=true

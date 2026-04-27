@@ -67,16 +67,21 @@ def run_search(
 
 
 def lookup_by_qualified_name(qualified_name: str) -> dict | None:
-    """Exact symbol lookup — used by /search/symbol."""
+    """Exact symbol lookup — used by /search/symbol.
+
+    Filters out placeholder nodes (created by relations into not-yet-indexed
+    symbols) so the real labeled entity is always returned when both exist.
+    """
     drv = neo4j_store.driver()
     cypher = (
         "MATCH (n) WHERE n.qualified_name = $qn "
+        "AND n.placeholder IS NULL AND size(labels(n)) > 0 "
         "RETURN n.chunk_id AS chunk_id, n.qualified_name AS qualified_name, "
         "       n.name AS symbol_name, n.file_path AS file_path, "
         "       n.line_start AS line_start, n.line_end AS line_end, "
         "       n.signature AS signature, n.docstring AS docstring, "
         "       labels(n) AS labels "
-        "LIMIT 1"
+        "ORDER BY size(labels(n)) DESC LIMIT 1"
     )
     with drv.session() as session:
         record = session.run(cypher, qn=qualified_name).single()
