@@ -6,7 +6,9 @@ pydantic-settings==2.5.2
 sqlalchemy==2.0.35
 
 neo4j==5.24.0
-qdrant-client==1.12.0
+# Match Qdrant server version. Bump cùng nhịp với image qdrant/qdrant
+# trong docker-compose.yml. Khoảng tolerance 1 minor để pip cache reuse.
+qdrant-client>=1.12.0,<1.14.0
 fastembed>=0.5.0,<0.9.0
 
 tree-sitter>=0.23.0,<0.26.0
@@ -19,13 +21,16 @@ ollama==0.3.3
 voyageai==0.2.4
 anthropic==0.39.0
 
+# CPU-only torch cho cross-encoder rerank.
+# Trên Linux x86_64 wheel mặc định pull theo CUDA — torch ~800MB. Pin
+# CPU build để rẻ hơn ~400MB và download nhanh hơn nhiều.
+# Trên Apple Silicon (arm64) PyPI mặc định đã CPU-only — pip dùng pin
+# này không vấn đề.
 sentence-transformers==3.1.1
+
 langfuse==2.50.0
 
 mcp>=1.0.0,<2.0.0
 
 python-dotenv==1.0.1
 structlog==24.4.0
-
-pytest==8.3.3
-pytest-asyncio==0.24.0

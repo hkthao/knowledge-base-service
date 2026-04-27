@@ -1,0 +1,52 @@
+# Tránh ship cả repo + venv + data vào build context.
+# Build context lớn = dài thời gian COPY ở mỗi lần build.
+
+.venv/
+venv/
+.git/
+.gitignore
+.gitattributes
+.editorconfig
+
+# Repo người dùng + docs + state runtime
+repos/
+documents/
+data/
+docs/
+
+# Test fixtures + dev artifacts
+tests/
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Build cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Roslyn — build trong context riêng của roslyn-service/
+roslyn-service/
+
+# Markdown / docs ở root
+README.md
+*.md
+
+# .env, file ẩn không cần ship
+.env
+.env.local
+.env.example
+.mcp.json
+
+# Notebooks / experiments
+notebooks/
+scratch/
