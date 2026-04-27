@@ -47,3 +47,25 @@ class SyncLog(Base):
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
     error = Column(Text, nullable=True)
+
+
+class DescJob(Base):
+    """Per-chunk Vietnamese description generation job.
+
+    Indexing writes structural code chunks synchronously, then enqueues a
+    DescJob for each. A worker drains the queue async — `/index/file`
+    never blocks on the LLM. If a job fails, code remains searchable in
+    `code_ts` / `code_cs`; only the `*_desc` collection lacks it.
+    """
+
+    __tablename__ = "desc_jobs"
+
+    chunk_id = Column(String, primary_key=True)
+    qualified_name = Column(String, nullable=False, index=True)
+    language = Column(String, nullable=False)  # typescript | csharp
+    repo = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    enqueued_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    error = Column(Text, nullable=True)

@@ -150,6 +150,14 @@ def insert_parse_result(
     return qns
 
 
+def set_property_by_chunk_id(drv: Driver, chunk_id: str, key: str, value) -> None:
+    with drv.session() as session:
+        session.run(
+            "MATCH (n) WHERE n.chunk_id = $chunk_id SET n[$key] = $value",
+            chunk_id=chunk_id, key=key, value=value,
+        )
+
+
 def delete_by_file(drv: Driver, file_path: str) -> None:
     with drv.session() as session:
         session.run(

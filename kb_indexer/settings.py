@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # NuGet packages). Forwarded to roslyn-service via INTERNAL_NS_PREFIXES.
     internal_ns_prefixes: str = ""
 
+    description_llm_backend: str = "anthropic"  # anthropic | ollama
+    description_llm_model: str = "claude-haiku-4-5"
+    anthropic_api_key: str = ""
+    description_content_chars: int = 500
+    description_worker_batch: int = 16
+
     state_db_path: str = "data/index_state.db"
 
     dense_dim: int = 768

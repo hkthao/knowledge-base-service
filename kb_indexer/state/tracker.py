@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..settings import settings
-from .models import Base, DocIndex, FileIndex, SyncLog
+from .models import Base, DescJob, DocIndex, FileIndex, SyncLog
 
 
 def _engine_for(db_path: str):
@@ -148,6 +148,90 @@ def mark_sync_failed(op_id: str, error: str) -> None:
         if entry is not None:
             entry.error = error
             entry.completed_at = _now()
+
+
+# ── Description jobs ───────────────────────────────────────────────────
+
+def enqueue_desc_jobs(jobs: list[dict]) -> None:
+    """Bulk enqueue. Each dict: chunk_id, qualified_name, language, repo."""
+    if not jobs:
+        return
+    with session() as s:
+        for job in jobs:
+            existing = s.get(DescJob, job["chunk_id"])
+            if existing is None:
+                s.add(DescJob(
+                    chunk_id=job["chunk_id"],
+                    qualified_name=job["qualified_name"],
+                    language=job["language"],
+                    repo=job["repo"],
+                    status="pending",
+                    attempts=0,
+                    enqueued_at=_now(),
+                ))
+            else:
+                # Re-enqueue (e.g. file re-indexed): reset to pending.
+                existing.qualified_name = job["qualified_name"]
+                existing.language = job["language"]
+                existing.repo = job["repo"]
+                existing.status = "pending"
+                existing.attempts = 0
+                existing.enqueued_at = _now()
+                existing.error = None
+                existing.completed_at = None
+
+
+def claim_pending_desc_jobs(limit: int = 32) -> list[DescJob]:
+    """Atomically mark a batch of pending jobs as `processing` and return them."""
+    with session() as s:
+        rows = list(s.execute(
+            select(DescJob)
+            .where(DescJob.status == "pending")
+            .limit(limit),
+        ).scalars())
+        for row in rows:
+            row.status = "processing"
+            row.attempts = (row.attempts or 0) + 1
+        # Detach so callers can read fields after session closes
+        s.flush()
+        return [
+            DescJob(
+                chunk_id=r.chunk_id,
+                qualified_name=r.qualified_name,
+                language=r.language,
+                repo=r.repo,
+                status=r.status,
+                attempts=r.attempts,
+            )
+            for r in rows
+        ]
+
+
+def mark_desc_done(chunk_id: str) -> None:
+    with session() as s:
+        row = s.get(DescJob, chunk_id)
+        if row is not None:
+            row.status = "done"
+            row.completed_at = _now()
+            row.error = None
+
+
+def mark_desc_failed(chunk_id: str, error: str, *, retry: bool) -> None:
+    with session() as s:
+        row = s.get(DescJob, chunk_id)
+        if row is not None:
+            row.status = "pending" if retry else "failed"
+            row.error = error[:2000]
+            row.completed_at = None if retry else _now()
+
+
+def desc_job_counts() -> dict[str, int]:
+    from sqlalchemy import func
+    with session() as s:
+        rows = s.execute(
+            select(DescJob.status, func.count()).group_by(DescJob.status),
+        ).all()
+        return {status: count for status, count in rows}
 
 
 # ── Doc index ──────────────────────────────────────────────────────────

@@ -104,6 +104,17 @@ def count_by_file(qc: QdrantClient, collection: str, file_path: str) -> int:
     return res.count
 
 
+def retrieve_payload(qc: QdrantClient, collection: str, point_id: str) -> dict | None:
+    points = qc.retrieve(collection_name=collection, ids=[point_id], with_payload=True)
+    if not points:
+        return None
+    return dict(points[0].payload or {})
+
+
+def set_payload(qc: QdrantClient, collection: str, point_id: str, payload: dict) -> None:
+    qc.set_payload(collection_name=collection, payload=payload, points=[point_id], wait=True)
+
+
 def hybrid_search(
     qc: QdrantClient,
     collection: str,
